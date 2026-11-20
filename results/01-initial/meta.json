@@ -1,0 +1,21 @@
+{
+  "sdk": {
+    "base": "ab7f1c8a3f257e59c3ef8a828cb8a9082cc779bb",
+    "base_ref": "origin/perf/infra",
+    "pr": "f197dda7e9f31d7d0e2af7e5496d43a5d15e1c7e",
+    "pr_ref": "f197dda7e9f31d7d0e2af7e5496d43a5d15e1c7e"
+  },
+  "equivalent_pr_head": "9bdd2cea4df07480c5532916e2fc9a04a8f2646f",
+  "benchmarks": {
+    "commit": null,
+    "source": "sdk/test/Performance/CoreBenchmarks in the measured aws-sdk-net commit (before this repo existed)"
+  },
+  "filter": "*SigningBenchmarks*",
+  "runtimes": [
+    "net10.0",
+    "net11.0"
+  ],
+  "rounds": 3,
+  "job": "Default",
+  "note": "Phase 1 pilot run, made before the benchmarks moved to this repo and before the PR was rebased onto main. The base was the fork's perf/infra branch, which was aws-sdk-net c1cc4aae7a0 plus fork-only tooling commits with no product changes. The measured commit's product diff is identical to equivalent_pr_head."
+}
