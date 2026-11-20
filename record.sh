@@ -54,11 +54,11 @@ main() {
   name=${head_ref#perf/}; name=${name//\//-}
   branch="pr/$PR-$name"
 
-  local REPO WT
+  # REPO and WT are globals: the EXIT trap runs after main returns.
   REPO=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)
   git -C "$REPO" fetch --quiet origin
   WT=$(mktemp -d "${TMPDIR:-/tmp}/record-pr$PR-XXXXXX")
-  trap 'git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"' EXIT
+  trap 'git -C "$REPO" worktree remove --force "$WT" 2>/dev/null || rm -rf "$WT"; git -C "$REPO" worktree prune' EXIT
   if git -C "$REPO" rev-parse --verify --quiet "refs/remotes/origin/$branch" > /dev/null; then
     git -C "$REPO" worktree add --quiet -B "$branch" "$WT" "origin/$branch"
   else
