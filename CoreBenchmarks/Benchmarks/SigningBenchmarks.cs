@@ -4,6 +4,7 @@ using Amazon.Runtime;
 using Amazon.Runtime.Internal;
 using Amazon.Runtime.Internal.Auth;
 using Amazon.Runtime.Internal.Util;
+using Amazon.Util;
 using BenchmarkDotNet.Attributes;
 
 namespace CoreBenchmarks.Benchmarks;
@@ -29,6 +30,12 @@ public class SigningBenchmarks
     private IRequest _jsonPost;
     private IRequest _s3Get;
     private IRequest _s3Presign;
+    private IRequest _restJsonPost;
+    private IRequest _s3GetObject;
+    private Uri _lambdaEndpoint;
+    private Uri _s3Endpoint;
+    private Dictionary<string, string> _lambdaPathResources;
+    private Dictionary<string, string> _s3KeyPathResources;
 
     [GlobalSetup]
     public void Setup()
@@ -81,7 +88,41 @@ public class SigningBenchmarks
         _s3Presign.Parameters["X-Amz-Expires"] = "3600";
         _s3Presign.Parameters["X-Amz-Security-Token"] = SessionToken;
         _s3Presign.UseQueryString = true;
+
+        // Lambda Invoke-shaped REST-JSON POST: a resource path with a label, signed with double encoding.
+        var lambdaConfig = new BenchClientConfig { AuthenticationServiceName = "lambda", AuthenticationRegion = "us-west-2" };
+        _lambdaConfig = lambdaConfig;
+        _lambdaEndpoint = new Uri("https://lambda.us-west-2.amazonaws.com");
+        _restJsonPost = new DefaultRequest(new StubRequest(), "AmazonLambda")
+        {
+            HttpMethod = "POST",
+            Endpoint = _lambdaEndpoint,
+            ResourcePath = "/2015-03-31/functions/{FunctionName}/invocations",
+            AuthenticationRegion = "us-west-2",
+            Content = Encoding.UTF8.GetBytes("{\"orderId\":\"12345\"}"),
+        };
+        _restJsonPost.AddPathResource("{FunctionName}", "my-function:prod");
+        AddCommonHeaders(_restJsonPost);
+        _restJsonPost.Headers["Content-Type"] = "application/json";
+        _restJsonPost.Headers["Content-Length"] = _restJsonPost.Content.Length.ToString();
+        _lambdaPathResources = new Dictionary<string, string> { { "{FunctionName}", "my-function:prod" } };
+
+        // S3 GetObject-shaped GET: a greedy key label with characters that need encoding.
+        _s3Endpoint = new Uri("https://my-bucket.s3.us-west-2.amazonaws.com");
+        _s3GetObject = new DefaultRequest(new StubRequest(), "AmazonS3")
+        {
+            HttpMethod = "GET",
+            Endpoint = _s3Endpoint,
+            ResourcePath = "/{Key+}",
+            AuthenticationRegion = "us-west-2",
+            DisablePayloadSigning = true,
+        };
+        _s3GetObject.AddPathResource("{Key+}", "photos/2026/11/20/IMG 0001 (copy).jpg");
+        AddCommonHeaders(_s3GetObject);
+        _s3KeyPathResources = new Dictionary<string, string> { { "{Key+}", "photos/2026/11/20/IMG 0001 (copy).jpg" } };
     }
+
+    private BenchClientConfig _lambdaConfig;
 
     private static void AddCommonHeaders(IRequest request)
     {
@@ -111,6 +152,28 @@ public class SigningBenchmarks
         var result = AWS4PreSignedUrlSigner.SignRequest(_s3Presign, _s3Config, _metrics, AccessKey, SecretKey, "s3", "us-west-2");
         return result.ForQueryParameters;
     }
+
+    [Benchmark]
+    public string Sign_RestJsonPathResources()
+    {
+        _signer.Sign(_restJsonPost, _lambdaConfig, _metrics, _credentials);
+        return _restJsonPost.Headers["Authorization"];
+    }
+
+    [Benchmark]
+    public string Sign_S3GetObjectKey()
+    {
+        _signer.Sign(_s3GetObject, _s3Config, _metrics, _credentials);
+        return _s3GetObject.Headers["Authorization"];
+    }
+
+    [Benchmark]
+    public string CanonicalizeResourcePath_RestJson()
+        => AWSSDKUtils.CanonicalizeResourcePathV2(_lambdaEndpoint, "/2015-03-31/functions/{FunctionName}/invocations", true, _lambdaPathResources);
+
+    [Benchmark]
+    public string CanonicalizeResourcePath_S3Key()
+        => AWSSDKUtils.CanonicalizeResourcePathV2(_s3Endpoint, "/{Key+}", false, _s3KeyPathResources);
 
     private sealed class StubRequest : AmazonWebServiceRequest { }
 
