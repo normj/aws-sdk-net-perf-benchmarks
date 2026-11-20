@@ -165,6 +165,7 @@ main() {
 
   cleanup() {
     local status=$?
+    (( status != 0 )) && log "FAILED with exit status $status; see the lines above"
     if [[ $KEEP == 1 ]]; then
       log "keeping worktrees under $RUN_WT"
     else
@@ -180,10 +181,23 @@ main() {
   trap cleanup EXIT
 
   log "run $RUN_ID"
+  # Concurrent `git worktree add` calls on one repo occasionally fail ("Could not write new index
+  # file"); retry a few times before giving up.
+  add_worktree() {
+    local dir=$1 sha=$2 try
+    for try in 1 2 3 4 5; do
+      git -C "$REPO" worktree add --quiet --detach "$dir" "$sha" && return 0
+      git -C "$REPO" worktree remove --force "$dir" 2>/dev/null || rm -rf "$dir"
+      git -C "$REPO" worktree prune 2>/dev/null || true
+      log "worktree add failed (attempt $try), retrying"
+      sleep $(( try * 5 ))
+    done
+    return 1
+  }
   log "base $BASE_SHA -> $BASE_WT"
-  git -C "$REPO" worktree add --quiet --detach "$BASE_WT" "$BASE_SHA"
+  add_worktree "$BASE_WT" "$BASE_SHA"
   log "pr   $PR_SHA -> $PR_WT"
-  git -C "$REPO" worktree add --quiet --detach "$PR_WT" "$PR_SHA"
+  add_worktree "$PR_WT" "$PR_SHA"
 
   # One copy of the benchmark project per side, each pinned to its worktree. The pin is a
   # Directory.Build.props rather than a command-line property because BenchmarkDotNet
@@ -262,6 +276,7 @@ PROPS
   }
 
   log "waiting for benchmark lock $LOCK"
+  # `flock -u 9` below releases the lock even if a child process kept a copy of fd 9.
   exec 9>"$LOCK"
   flock 9
   log "lock acquired"
