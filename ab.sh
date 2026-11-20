@@ -92,6 +92,7 @@ main() {
   [[ -f "$REPO/sdk/src/Core/AWSSDK.Core.NetStandard.csproj" ]] || { echo "$REPO is not an aws-sdk-net checkout" >&2; exit 2; }
   WT_ROOT=$(realpath -m "${AB_WORKTREES:-$HOME/code/perf-ab-worktrees}")
   LOCK=${AB_LOCK:-/tmp/core-bench.lock}
+  local GATE=${AB_GATE:-$LOCK.gate}
 
   local NPROC MAX_LOAD LOAD_WAIT
   NPROC=$(nproc)
@@ -265,7 +266,7 @@ PROPS
       # Each runtime runs as the BDN host process (-f), so any TFM the project targets works,
       # including ones BenchmarkDotNet has no --runtimes moniker for yet.
       ( cd "$bench" && dotnet run -c Release -f "$tfm" --no-build -- \
-          --filter "$FILTER" --job "$JOB" "${counts[@]}" --memory --exporters json --artifacts "$art" ) > "$art/run.log" 2>&1 \
+          --filter "$FILTER" --job "$JOB" "${counts[@]}" --memory --exporters json --artifacts "$art" ) > "$art/run.log" 2>&1 9>&- \
         || { echo "Benchmark run failed ($side, $tfm, round $round), see $art/run.log" >&2; tail -30 "$art/run.log" >&2; exit 1; }
       if ! ls "$art"/results/*-report-full-compressed.json > /dev/null 2>&1; then
         echo "No BDN results for $side ($tfm, round $round); check the filter. See $art/run.log" >&2
@@ -275,10 +276,15 @@ PROPS
     done
   }
 
+  # The gate gives benchmarks priority over with-test-lock.sh commands: once held, no new test can
+  # take the lock in shared mode, so the exclusive lock below only waits for tests already running.
   log "waiting for benchmark lock $LOCK"
-  # `flock -u 9` below releases the lock even if a child process kept a copy of fd 9.
+  exec 8>"$GATE"
+  flock -x 8
   exec 9>"$LOCK"
-  flock 9
+  flock -x 9
+  flock -u 8
+  exec 8>&-
   log "lock acquired"
   local r
   for ((r = 1; r <= ROUNDS; r++)); do

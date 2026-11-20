@@ -126,11 +126,16 @@ shell tool call returns.
 ### Keeping the machine quiet
 
 Other heavy work on the host (unit test runs, reviewer builds, `git gc`) skews timings. Run heavy
-commands under the benchmark lock while benchmarks may be running:
+commands through `with-test-lock.sh`:
 
 ```bash
-flock /tmp/core-bench.lock dotnet test ...
+./with-test-lock.sh dotnet test sdk/test/UnitTests/AWSSDK.UnitTests.Core.csproj -c Release -f net10.0
 ```
+
+These commands share the lock, so any number can run at once, and they never overlap a
+measurement. A queued benchmark has priority: new commands wait until it has measured. Don't use a
+plain `flock /tmp/core-bench.lock <cmd>`: it serializes all tests, and the C# compiler server that
+`dotnet` starts inherits the lock and keeps it after the command ends.
 
 This only waits between whole A/B runs, not between rounds. The quiet-machine check in step 7
 covers work that does not take the lock.
