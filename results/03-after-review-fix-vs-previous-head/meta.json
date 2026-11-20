@@ -1,0 +1,21 @@
+{
+  "sdk": {
+    "base": "3cc5d5c3e77541e1e1c1e2a66c61dcef8f80c276",
+    "base_ref": "origin/perf/infra",
+    "pr": "3d6df20eb0728fbf18d6b40f6cba2c7268ac6332",
+    "pr_ref": "3d6df20eb0728fbf18d6b40f6cba2c7268ac6332"
+  },
+  "equivalent_pr_head": "37aaf04a22216e584cb8fa557ee4a05b5bf03a5d",
+  "benchmarks": {
+    "commit": null,
+    "source": "sdk/test/Performance/CoreBenchmarks in the measured aws-sdk-net commit (before this repo existed)"
+  },
+  "filter": "*SigningBenchmarks*",
+  "runtimes": [
+    "net10.0",
+    "net11.0"
+  ],
+  "rounds": 3,
+  "job": "Default",
+  "note": "Re-measure after the review fix, against the previous PR head instead of the base. Phase 1 pilot run made before the benchmarks moved to this repo."
+}
