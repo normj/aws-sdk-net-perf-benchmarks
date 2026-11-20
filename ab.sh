@@ -13,6 +13,14 @@
 #   --runtimes "<tfms>"   Target frameworks to measure, each run as the BDN host (default: "net10.0 net11.0")
 #   --rounds <n>          Interleaved rounds, base then PR each round (default: 3)
 #   --job <name>          BDN job: Default, Short, Medium, Long, Dry (default: Default)
+#   --warmups <n>         Warmup iterations per benchmark, Default job only (default: $AB_WARMUPS or 3)
+#   --iterations <n>      Measured iterations per benchmark, Default job only (default: $AB_ITERATIONS or 10)
+#   --iteration-ms <n>    Target duration of one iteration in ms, Default job only (default: $AB_ITERATION_MS or 250)
+#   --toolchain <t>       inprocess (default: $AB_TOOLCHAIN or inprocess) runs each benchmark inside the
+#                         host process, skipping BenchmarkDotNet's per-invocation rebuild; outofprocess is
+#                         BenchmarkDotNet's normal mode.
+#   --screen              Quick screening run: net10.0 only, 1 round, 2 warmups, 6 iterations.
+#                         Use it to decide whether a candidate deserves a full run; never for PR numbers.
 #   --out <dir>           Output directory (default: ./ab-results/<base>-<pr>-<timestamp>)
 #   --background          Detach from the calling shell (setsid nohup), log to <out>/ab.log, print the PID
 #   --keep-worktrees      Keep this run's worktrees instead of removing them at exit
@@ -51,7 +59,8 @@ main() {
   [[ $# -ge 3 ]] || usage
   local BASE_REF=$1 PR_REF=$2 FILTER=$3; shift 3
 
-  local RUNTIMES="net10.0 net11.0" ROUNDS=3 JOB=Default OUT="" BACKGROUND=0
+  local RUNTIMES="net10.0 net11.0" ROUNDS=3 JOB=Default OUT="" BACKGROUND=0 SCREEN=0
+  local WARMUPS=${AB_WARMUPS:-3} ITERATIONS=${AB_ITERATIONS:-10} TOOLCHAIN=${AB_TOOLCHAIN:-inprocess} ITER_MS=${AB_ITERATION_MS:-250}
   local SDK_REPO=${AWS_SDK_NET_REPO:-$SCRIPT_DIR/../aws-sdk-net}
   KEEP=0  # global: read by the EXIT trap, which runs after main returns
   while [[ $# -gt 0 ]]; do
@@ -61,8 +70,14 @@ main() {
       --job)      JOB=$2; shift 2 ;;
       --out)      OUT=$2; shift 2 ;;
       --sdk-repo) SDK_REPO=$2; shift 2 ;;
+      --warmups)  WARMUPS=$2; shift 2 ;;
+      --toolchain) TOOLCHAIN=$2; shift 2 ;;
+      --iteration-ms) ITER_MS=$2; shift 2 ;;
+      --iterations) ITERATIONS=$2; shift 2 ;;
+      --screen)   SCREEN=1; RUNTIMES=net10.0; ROUNDS=1; WARMUPS=2; ITERATIONS=6; shift ;;
       --background) BACKGROUND=1; shift ;;
       --keep-worktrees) KEEP=1; shift ;;
+      --screen-mark) SCREEN=1; shift ;;  # internal: --background re-exec of a --screen run
       -h|--help)  usage ;;
       *) echo "Unknown option: $1" >&2; usage ;;
     esac
@@ -88,6 +103,7 @@ main() {
   BASE_SHA=$(git -C "$REPO" rev-parse --verify "$BASE_REF^{commit}")
   PR_SHA=$(git -C "$REPO" rev-parse --verify "$PR_REF^{commit}")
   B12=${BASE_SHA:0:12}; P12=${PR_SHA:0:12}
+  [[ $TOOLCHAIN == inprocess || $TOOLCHAIN == outofprocess ]] || { echo "--toolchain must be inprocess or outofprocess" >&2; exit 2; }
   [[ -n "$OUT" ]] || OUT="$PWD/ab-results/${B12}-${P12}-$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$OUT"
   OUT=$(cd -P "$OUT" && pwd -P)
@@ -99,6 +115,7 @@ main() {
     AB_BASE_REF_NAME=${AB_BASE_REF_NAME:-$BASE_REF} AB_PR_REF_NAME=${AB_PR_REF_NAME:-$PR_REF} \
     setsid nohup "$SCRIPT_PATH" "$BASE_SHA" "$PR_SHA" "$FILTER" \
       --sdk-repo "$REPO" --runtimes "$RUNTIMES" --rounds "$ROUNDS" --job "$JOB" --out "$OUT" \
+      --warmups "$WARMUPS" --iterations "$ITERATIONS" --toolchain "$TOOLCHAIN" --iteration-ms "$ITER_MS" $([[ $SCREEN == 1 ]] && echo --screen-mark) \
       $([[ $KEEP == 1 ]] && echo --keep-worktrees) \
       > "$OUT/ab.log" 2>&1 < /dev/null &
     local pid=$!
@@ -125,10 +142,14 @@ main() {
   [[ -n "$(git -C "$SCRIPT_DIR" status --porcelain -- CoreBenchmarks 2>/dev/null)" ]] && BENCH_DIRTY=true
   jq -n --arg base "$BASE_SHA" --arg base_ref "${AB_BASE_REF_NAME:-$BASE_REF}" --arg pr "$PR_SHA" --arg pr_ref "${AB_PR_REF_NAME:-$PR_REF}" \
         --arg filter "$FILTER" --arg runtimes "$RUNTIMES" --argjson rounds "$ROUNDS" --arg job "$JOB" \
+        --argjson warmups "$WARMUPS" --argjson iterations "$ITERATIONS" --arg toolchain "$TOOLCHAIN" --argjson iter_ms "$ITER_MS" --argjson screen "$([[ $SCREEN == 1 ]] && echo true || echo false)" \
         --arg bench "$BENCH_SHA" --argjson dirty "$BENCH_DIRTY" --arg started "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '{sdk: {base: $base, base_ref: $base_ref, pr: $pr, pr_ref: $pr_ref},
           benchmarks: {commit: $bench, uncommitted_changes: $dirty},
-          filter: $filter, runtimes: ($runtimes | split(" ")), rounds: $rounds, job: $job, started: $started}' \
+          filter: $filter, runtimes: ($runtimes | split(" ")), rounds: $rounds, job: $job,
+          warmups: (if $job == "Default" then $warmups else null end),
+          iterations: (if $job == "Default" then $iterations else null end),
+          iteration_ms: (if $job == "Default" then $iter_ms else null end), toolchain: $toolchain, screening: $screen, started: $started}' \
         > "$OUT/meta.json"
   # Per-run worktrees. Two runs with the same base SHA used to share one worktree, and the
   # second run would reset it and overwrite its benchmark source while the first was measuring.
@@ -217,7 +238,11 @@ PROPS
   }
 
   run_side() {
-    local side=$1 round=$2 bench=$3 tfm art
+    local side=$1 round=$2 bench=$3 tfm art counts=()
+    # Fixed counts instead of BenchmarkDotNet's adaptive defaults: these are microsecond-scale
+    # benchmarks and the interleaved rounds already repeat each measurement.
+    [[ $JOB == Default ]] && counts=(--warmupCount "$WARMUPS" --iterationCount "$ITERATIONS" --iterationTime "$ITER_MS")
+    [[ $TOOLCHAIN == inprocess ]] && counts+=(--inProcess)
     for tfm in $RUNTIMES; do
       art="$OUT/round$round/$side/$tfm"
       mkdir -p "$art"
@@ -226,7 +251,7 @@ PROPS
       # Each runtime runs as the BDN host process (-f), so any TFM the project targets works,
       # including ones BenchmarkDotNet has no --runtimes moniker for yet.
       ( cd "$bench" && dotnet run -c Release -f "$tfm" --no-build -- \
-          --filter "$FILTER" --job "$JOB" --memory --exporters json --artifacts "$art" ) > "$art/run.log" 2>&1 \
+          --filter "$FILTER" --job "$JOB" "${counts[@]}" --memory --exporters json --artifacts "$art" ) > "$art/run.log" 2>&1 \
         || { echo "Benchmark run failed ($side, $tfm, round $round), see $art/run.log" >&2; tail -30 "$art/run.log" >&2; exit 1; }
       if ! ls "$art"/results/*-report-full-compressed.json > /dev/null 2>&1; then
         echo "No BDN results for $side ($tfm, round $round); check the filter. See $art/run.log" >&2
@@ -249,7 +274,8 @@ PROPS
   exec 9>&-
 
   python3 "$OUT/compare.py" "$OUT" --base "$BASE_SHA" --pr "$PR_SHA" --filter "$FILTER" \
-    --bench "$BENCH_SHA$([[ $BENCH_DIRTY == true ]] && echo ' (plus uncommitted changes)')" > "$OUT/summary.md"
+    --bench "$BENCH_SHA$([[ $BENCH_DIRTY == true ]] && echo ' (plus uncommitted changes)')" \
+    $([[ $SCREEN == 1 ]] && echo --screen) > "$OUT/summary.md"
   log "summary: $OUT/summary.md"
   cat "$OUT/summary.md"
 }

@@ -132,6 +132,7 @@ def main():
     ap.add_argument("--pr", required=True)
     ap.add_argument("--filter", default="")
     ap.add_argument("--bench", default="", help="commit of the benchmarks repo the benchmark source came from")
+    ap.add_argument("--screen", action="store_true", help="screening run: report whether a full run is warranted")
     args = ap.parse_args()
 
     data, env_headers, n_rounds = load(args.out_dir)
@@ -141,7 +142,8 @@ def main():
         sys.exit(1)
 
     lines = []
-    lines.append("### BenchmarkDotNet A/B results")
+    lines.append("### BenchmarkDotNet A/B screening run (not for PR numbers)" if args.screen
+                 else "### BenchmarkDotNet A/B results")
     lines.append("")
     lines.append(f"- Base: `{args.base}`")
     lines.append(f"- PR: `{args.pr}`")
@@ -199,6 +201,19 @@ def main():
                    f"{alloc_verdicts.count('less')}/{len(alloc_verdicts)} rows allocate less")
     else:
         overall = "no measurable change: below the 5% time bar and no allocation reduction"
+    if args.screen:
+        promising = []
+        for key in keys:
+            bm = [x[0] for x in data["base"].get(key, [])]
+            pm = [x[0] for x in data["pr"].get(key, [])]
+            ba = [x[1] for x in data["base"].get(key, []) if x[1] is not None]
+            pa = [x[1] for x in data["pr"].get(key, []) if x[1] is not None]
+            if bm and pm and statistics.median(pm) <= 0.95 * statistics.median(bm):
+                promising.append(f"{key[0]} time")
+            if ba and pa and statistics.median(pa) <= 0.99 * statistics.median(ba):
+                promising.append(f"{key[0]} alloc")
+        overall = ("PROMISING, run the full A/B: " + ", ".join(promising)) if promising and not regressed \
+            else ("NOT PROMISING: " + ("a row regressed" if regressed else "no row is 5% faster or allocates 1% less"))
     lines.insert(lines.index("| Benchmark | Runtime | Base mean | PR mean | Time ratio | Time | Base alloc | PR alloc | Alloc ratio | Alloc |") - 1,
                  f"\n**Overall:** {overall}.")
 

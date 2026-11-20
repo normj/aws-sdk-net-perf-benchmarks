@@ -48,9 +48,30 @@ this repo's working tree at the moment the run starts, so you can try a new benc
 before committing it. `meta.json` records whether it had uncommitted changes.
 
 Defaults: runtimes `net10.0 net11.0`, 3 interleaved rounds (base, PR, base, PR, base, PR),
-BenchmarkDotNet `Default` job, MemoryDiagnoser. Options: `--rounds`, `--runtimes`, `--job Short`
-or `--job Dry` (only for quick local iteration, never for PR numbers), `--out`, `--sdk-repo`,
-`--background`, `--keep-worktrees`.
+MemoryDiagnoser, and fixed BenchmarkDotNet counts: 3 warmup and 10 measured iterations of 250 ms
+each, run in-process (`--inProcess`) so BenchmarkDotNet does not rebuild a project for every
+invocation. A full run of `SigningBenchmarks` takes about 5.5 minutes. Options: `--rounds`,
+`--runtimes`, `--warmups`, `--iterations`, `--iteration-ms`, `--toolchain outofprocess`
+(BenchmarkDotNet's normal mode), `--job Short` or `--job Dry` (quick local checks only),
+`--screen`, `--out`, `--sdk-repo`, `--background`, `--keep-worktrees`.
+
+These settings were checked before use. With the same commit on both sides, every row came out
+`same`, within 2%. PR #4's known win measured 9% to 10% faster with them, within 1% of its earlier
+run with BenchmarkDotNet's adaptive defaults.
+
+### Screen first, then measure
+
+Every candidate gets a screening run before a full run:
+
+```bash
+./ab.sh origin/main perf/core-foo '*FooBenchmarks.Method*' --screen --out ~/code/perf-ab-results/foo-screen
+```
+
+`--screen` runs `net10.0` only, 1 round, 2 warmup and 6 measured iterations, in about a minute.
+Its summary ends with `PROMISING` when some row is at least 5% faster or allocates at least 1%
+less, and with `NOT PROMISING` otherwise. Only `PROMISING` candidates get the full run, and
+only the full run's numbers go in a PR. Filter both runs to the benchmark methods the change
+can affect: every extra method adds about 20 seconds per invocation.
 
 ### Running in the background
 
