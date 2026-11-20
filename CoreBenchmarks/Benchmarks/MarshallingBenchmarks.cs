@@ -1,4 +1,7 @@
+using System.Net;
 using System.Text;
+using Amazon.Runtime;
+using Amazon.Runtime.EventStreams;
 using Amazon.Runtime.Internal.Transform;
 using Amazon.Runtime.Internal.Util;
 using BenchmarkDotNet.Attributes;
@@ -21,6 +24,12 @@ public class MarshallingBenchmarks
     private byte[] _jsonBools;
     private byte[] _jsonStrings;
     private DateTime _date;
+    private byte[] _jsonError;
+    private byte[] _jsonErrorNoMessage;
+    private byte[] _cachedBody;
+    private byte[] _readBuffer;
+    private ErrorResponseData _errorResponseData;
+    private ErrorResponseData _errorNoMessageResponseData;
 
     [GlobalSetup]
     public void Setup()
@@ -60,6 +69,15 @@ public class MarshallingBenchmarks
         _jsonBools = Encoding.UTF8.GetBytes(jsonBools.Append(']').ToString());
         _jsonStrings = Encoding.UTF8.GetBytes(jsonStrings.Append(']').ToString());
         _date = new DateTime(2024, 5, 17, 13, 45, 12, 345, DateTimeKind.Utc);
+
+        _jsonError = Encoding.UTF8.GetBytes("{\"__type\":\"com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException\",\"message\":\"The conditional request failed\"}");
+        _jsonErrorNoMessage = Encoding.UTF8.GetBytes("{\"__type\":\"com.amazonaws.dynamodb.v20120810#ThrottlingException\"}");
+        _errorResponseData = new ErrorResponseData(_jsonError.Length);
+        _errorNoMessageResponseData = new ErrorResponseData(_jsonErrorNoMessage.Length);
+
+        _cachedBody = new byte[16 * 1024];
+        rnd.NextBytes(_cachedBody);
+        _readBuffer = new byte[4096];
     }
 
     // End-to-end: an S3 ListObjectsV2-like body unmarshalled the way generated code does it.
@@ -117,6 +135,58 @@ public class MarshallingBenchmarks
 
     [Benchmark]
     public string Format_RFC822() => StringUtils.FromDateTimeToRFC822(_date);
+
+    // First-pass JSON error unmarshalling, as on every failed attempt (throttling, conditional checks, 4xx).
+    [Benchmark]
+    public string Error_Json() => UnmarshallJsonError(_jsonError, _errorResponseData);
+
+    [Benchmark]
+    public string Error_JsonNoMessage() => UnmarshallJsonError(_jsonErrorNoMessage, _errorNoMessageResponseData);
+
+    // Reading a body through CachingWrapperStream, which the unmarshaller contexts use for error
+    // responses and when response logging is on.
+    [Benchmark]
+    public int CachingStream_Read16K()
+    {
+        using var stream = new CachingWrapperStream(new MemoryStream(_cachedBody, false));
+        int total = 0, n;
+        while ((n = stream.Read(_readBuffer, 0, _readBuffer.Length)) > 0) total += n;
+        return total + stream.AllReadBytes.Count;
+    }
+
+    private static string UnmarshallJsonError(byte[] body, IWebResponseData responseData)
+    {
+        using var ctx = new JsonUnmarshallerContext(new MemoryStream(body, false), false, responseData, isException: true);
+        var reader = new StreamingUtf8JsonReader(ctx.Stream);
+        return JsonErrorResponseUnmarshaller.GetInstance().Unmarshall(ctx, ref reader).Message;
+    }
+
+    private sealed class ErrorResponseData : IWebResponseData
+    {
+        private readonly Dictionary<string, string> _headers;
+
+        public ErrorResponseData(long contentLength)
+        {
+            ContentLength = contentLength;
+            _headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Content-Length"] = contentLength.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["Content-Type"] = "application/x-amz-json-1.0",
+                ["x-amzn-RequestId"] = "6PFOQQ7JQ0JQ4R8KG6S1QJ8V0BVV4KQNSO5AEMVJF66Q9ASUAAJG",
+            };
+        }
+
+        public long ContentLength { get; }
+        public string ContentType => "application/x-amz-json-1.0";
+        public HttpStatusCode StatusCode => HttpStatusCode.BadRequest;
+        public bool IsSuccessStatusCode => false;
+        public string[] GetHeaderNames() => _headers.Keys.ToArray();
+        public bool IsHeaderPresent(string headerName) => _headers.ContainsKey(headerName);
+        public string GetHeaderValue(string headerName) => _headers.TryGetValue(headerName, out var v) ? v : null;
+        public IHttpResponseBody ResponseBody => null;
+        public IEventStreamHeader GetEventStreamHeader(string headerName) => null;
+        public bool IsEventHeaderPresent(string headerName) => false;
+    }
 
     private static int UnmarshallJsonList<T, TU>(byte[] body, JsonListUnmarshaller<T, TU> unmarshaller)
         where TU : IJsonUnmarshaller<T, JsonUnmarshallerContext>
