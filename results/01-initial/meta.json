@@ -1,0 +1,21 @@
+{
+  "sdk": {
+    "base": "ab7f1c8a3f257e59c3ef8a828cb8a9082cc779bb",
+    "base_ref": "origin/perf/infra",
+    "pr": "3cc5d5c3e77541e1e1c1e2a66c61dcef8f80c276",
+    "pr_ref": "3cc5d5c3e77541e1e1c1e2a66c61dcef8f80c276"
+  },
+  "equivalent_pr_head": null,
+  "benchmarks": {
+    "commit": null,
+    "source": "sdk/test/Performance/CoreBenchmarks in the measured aws-sdk-net commit (before this repo existed)"
+  },
+  "filter": "*SigningBenchmarks*",
+  "runtimes": [
+    "net10.0",
+    "net11.0"
+  ],
+  "rounds": 3,
+  "job": "Default",
+  "note": "Phase 1 pilot run of the first version, before the review fix that restored ComputeHash(string). Made before the benchmarks moved to this repo; base was the fork's perf/infra branch (aws-sdk-net c1cc4aae7a0 plus fork-only tooling commits)."
+}
