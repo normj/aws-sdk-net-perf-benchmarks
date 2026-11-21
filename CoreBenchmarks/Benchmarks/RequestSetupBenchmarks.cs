@@ -41,6 +41,7 @@ public class RequestSetupBenchmarks
     private TelemetryPipelineClient _telemetryClient;
     private TelemetryPipelineRequest _telemetryRequest;
     private TelemetryPipelineClient _plainClient;
+    private TelemetryPipelineClient _refreshingCredentialsClient;
 
     [GlobalSetup]
     public void Setup()
@@ -73,6 +74,9 @@ public class RequestSetupBenchmarks
         _plainClient = TelemetryPipelineClient.Create(telemetryProvider: null);
         NewRequest_InvokeSync();
         NewRequest_InvokeAsync().GetAwaiter().GetResult();
+
+        _refreshingCredentialsClient = TelemetryPipelineClient.Create(telemetryProvider: null, new CachedRefreshingCredentials());
+        RefreshingCredentials_InvokeAsync().GetAwaiter().GetResult();
     }
 
     [GlobalCleanup]
@@ -80,6 +84,7 @@ public class RequestSetupBenchmarks
     {
         _telemetryClient?.Dispose();
         _plainClient?.Dispose();
+        _refreshingCredentialsClient?.Dispose();
     }
 
     [Benchmark]
@@ -170,6 +175,12 @@ public class RequestSetupBenchmarks
     public async Task<string> NewRequest_InvokeAsync()
         => (await _plainClient.CallAsync(new TelemetryPipelineRequest()).ConfigureAwait(false)).ResponseMetadata.RequestId;
 
+    // Same call as NewRequest_InvokeAsync, but the client's credentials are RefreshingAWSCredentials (the base of the
+    // SDK's assume-role, container, instance-profile and SSO credentials) holding valid cached credentials.
+    [Benchmark]
+    public async Task<string> RefreshingCredentials_InvokeAsync()
+        => (await _refreshingCredentialsClient.CallAsync(new TelemetryPipelineRequest()).ConfigureAwait(false)).ResponseMetadata.RequestId;
+
     private ExecutionContext NewContext(BenchClientConfig config, bool isAsync)
     {
         var requestContext = new RequestContext(false)
@@ -256,6 +267,9 @@ public class RequestSetupBenchmarks
 
         // A null telemetryProvider keeps the config's default (no-op) provider.
         public static TelemetryPipelineClient Create(TelemetryProvider telemetryProvider)
+            => Create(telemetryProvider, new BasicAWSCredentials(AccessKey, SecretKey));
+
+        public static TelemetryPipelineClient Create(TelemetryProvider telemetryProvider, AWSCredentials credentials)
         {
             var config = new TelemetryPipelineConfig
             {
@@ -266,7 +280,7 @@ public class RequestSetupBenchmarks
             };
             if (telemetryProvider != null)
                 config.TelemetryProvider = telemetryProvider;
-            return new TelemetryPipelineClient(new BasicAWSCredentials(AccessKey, SecretKey), config);
+            return new TelemetryPipelineClient(credentials, config);
         }
 
         protected override void CustomizeRuntimePipeline(RuntimePipeline pipeline)
@@ -371,6 +385,16 @@ public class RequestSetupBenchmarks
             public IDefaultConfiguration GetDefaultConfiguration(RegionEndpoint clientRegion, DefaultConfigurationMode? requestedConfigurationMode = null)
                 => new DefaultConfiguration();
         }
+    }
+
+    // Refreshing credentials that are generated once and stay valid for a day, so every call is served from the cache.
+    private sealed class CachedRefreshingCredentials : RefreshingAWSCredentials
+    {
+        protected override CredentialsRefreshState GenerateNewCredentials()
+            => new CredentialsRefreshState(new ImmutableCredentials(AccessKey, SecretKey, "session-token"), DateTime.UtcNow.AddDays(1));
+
+        protected override Task<CredentialsRefreshState> GenerateNewCredentialsAsync()
+            => Task.FromResult(GenerateNewCredentials());
     }
 
     // Telemetry providers that are not the SDK's internal no-op types, so the SDK takes its
