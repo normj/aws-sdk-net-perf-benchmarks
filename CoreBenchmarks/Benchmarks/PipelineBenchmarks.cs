@@ -33,6 +33,8 @@ public class PipelineBenchmarks
     private BenchPipelineRequest _request;
     private DefaultRequest _restLabelRequest;
     private DefaultRequest _s3KeyRequest;
+    private Amazon.Runtime.Endpoints.Endpoint _s3Endpoint;
+    private Amazon.Runtime.Endpoints.Endpoint _multiSchemeEndpoint;
 
     [GlobalSetup]
     public void Setup()
@@ -61,6 +63,13 @@ public class PipelineBenchmarks
             HttpMethod = "GET",
         };
         _s3KeyRequest.AddPathResource("{Key+}", "photos/2024/summer/beach day.jpg");
+
+        // Resolved endpoints carrying authSchemes, as the S3 rules return them (one SigV4 scheme) and as a
+        // multi-Region access point or EventBridge global endpoint returns them (SigV4a, then SigV4).
+        _s3Endpoint = new Amazon.Runtime.Endpoints.Endpoint("https://amzn-s3-demo-bucket.s3.us-west-2.amazonaws.com",
+            "{\"authSchemes\":[{\"disableDoubleEncoding\":true,\"name\":\"sigv4\",\"signingName\":\"s3\",\"signingRegion\":\"us-west-2\"}]}", null);
+        _multiSchemeEndpoint = new Amazon.Runtime.Endpoints.Endpoint("https://mfzwi23gnjvgw.mrap.accesspoint.s3-global.amazonaws.com",
+            "{\"authSchemes\":[{\"disableDoubleEncoding\":true,\"name\":\"sigv4a\",\"signingName\":\"s3\",\"signingRegionSet\":[\"*\"]},{\"disableDoubleEncoding\":true,\"name\":\"sigv4\",\"signingName\":\"s3\",\"signingRegion\":\"us-east-1\"}]}", null);
 
         // Warm up connection caches, user-agent caches and similar one-time state.
         _client.Call(_request);
@@ -178,6 +187,14 @@ public class PipelineBenchmarks
     [Benchmark]
     public Uri RestUrl_ComposeUrl_S3GreedyKey() => AmazonServiceClient.ComposeUrl(_s3KeyRequest);
 
+    // The auth scheme resolvers of services whose endpoint rules carry auth schemes (S3, EventBridge, SESv2,
+    // CloudFront KeyValueStore) read them from the resolved endpoint on every request.
+    [Benchmark]
+    public int EndpointAuthSchemes_SingleSigV4() => BenchAuthSchemeHandler.FromEndpoint(_s3Endpoint).Count;
+
+    [Benchmark]
+    public int EndpointAuthSchemes_SigV4aAndSigV4() => BenchAuthSchemeHandler.FromEndpoint(_multiSchemeEndpoint).Count;
+
     public sealed class BenchPipelineRequest : AmazonWebServiceRequest { }
 
     public sealed class BenchPipelineResponse : AmazonWebServiceResponse
@@ -219,6 +236,8 @@ public class PipelineBenchmarks
 
     private sealed class BenchAuthSchemeHandler : BaseAuthResolverHandler
     {
+        public static List<IAuthSchemeOption> FromEndpoint(Amazon.Runtime.Endpoints.Endpoint endpoint) => RetrieveSchemesFromEndpoint(endpoint);
+
         protected override List<IAuthSchemeOption> ResolveAuthOptions(IExecutionContext executionContext)
             => AuthSchemeOption.DEFAULT_SIGV4;
     }
