@@ -41,6 +41,7 @@ public class SigningBenchmarks
     public void Setup()
     {
         _signer = new AWS4Signer();
+        EnsureChunkSetup();
         _jsonConfig = new BenchClientConfig { AuthenticationServiceName = "dynamodb", AuthenticationRegion = "us-west-2" };
         _s3Config = new BenchClientConfig { AuthenticationServiceName = "s3", AuthenticationRegion = "us-west-2" };
         _credentials = new SessionAWSCredentials(AccessKey, SecretKey, SessionToken);
@@ -275,6 +276,52 @@ public class SigningBenchmarks
 
     [Benchmark]
     public string ToHex_Sha256Lower() => AWSSDKUtils.ToHex(_hash32, true);
+
+    // S3 PutObject/UploadPart with a signed streaming payload and a trailing CRC32 checksum (the SDK default when
+    // payload signing is on): the body is read through ChunkedUploadWrapperStream, which signs every 80 KB chunk,
+    // the final empty chunk and the trailer. 4 KB is a small object (one data chunk), 1 MB is 13 data chunks.
+    private AWS4SigningResult _chunkSigningResult;
+    private MemoryStream _chunkBody4K;
+    private MemoryStream _chunkBody1M;
+    private byte[] _chunkReadBuffer;
+
+    private void EnsureChunkSetup()
+    {
+        if (_chunkSigningResult != null)
+            return;
+        var key = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("signing-key"));
+        var signature = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("seed-signature"));
+        _chunkSigningResult = new AWS4SigningResult(AccessKey, SecretKey, new DateTime(2026, 11, 21, 0, 0, 0, DateTimeKind.Utc),
+            "content-encoding;host;x-amz-content-sha256;x-amz-date;x-amz-decoded-content-length;x-amz-trailer",
+            "20261121/us-west-2/s3/aws4_request", key, signature);
+        var random = new Random(42);
+        var small = new byte[4096];
+        random.NextBytes(small);
+        _chunkBody4K = new MemoryStream(small, writable: false);
+        var large = new byte[1024 * 1024];
+        random.NextBytes(large);
+        _chunkBody1M = new MemoryStream(large, writable: false);
+        _chunkReadBuffer = new byte[81920];
+    }
+
+    private long ReadChunked(MemoryStream body)
+    {
+        body.Position = 0;
+        var trailing = new Dictionary<string, string> { { "x-amz-checksum-crc32", string.Empty } };
+        var cached = new CachedChecksum { OnComplete = static _ => { } };
+        var stream = new ChunkedUploadWrapperStream(body, 81920, _chunkSigningResult, CoreChecksumAlgorithm.CRC32, trailing, cached);
+        long total = 0;
+        int read;
+        while ((read = stream.Read(_chunkReadBuffer, 0, _chunkReadBuffer.Length)) > 0)
+            total += read;
+        return total;
+    }
+
+    [Benchmark]
+    public long ChunkedUpload_4KB() => ReadChunked(_chunkBody4K);
+
+    [Benchmark]
+    public long ChunkedUpload_1MB() => ReadChunked(_chunkBody1M);
 
     private sealed class StubRequest : AmazonWebServiceRequest { }
 
