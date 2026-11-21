@@ -31,6 +31,8 @@ public class PipelineBenchmarks
     private BenchPipelineClient _manyHeadersClient;
     private BenchPipelineClient _yieldingManyHeadersClient;
     private BenchPipelineRequest _request;
+    private DefaultRequest _restLabelRequest;
+    private DefaultRequest _s3KeyRequest;
 
     [GlobalSetup]
     public void Setup()
@@ -42,6 +44,23 @@ public class PipelineBenchmarks
         _manyHeadersClient = CreateClient(yieldInHandler: false, manyHeaders: true);
         _yieldingManyHeadersClient = CreateClient(yieldInHandler: true, manyHeaders: true);
         _request = new BenchPipelineRequest();
+
+        // REST requests as the generated marshallers build them: a Lambda Invoke-shaped path with one label,
+        // and an S3 GetObject-shaped greedy key (virtual-host bucket, so the path is just the key).
+        _restLabelRequest = new DefaultRequest(new BenchPipelineRequest(), "AWSLambda")
+        {
+            Endpoint = new Uri("https://lambda.us-west-2.amazonaws.com"),
+            ResourcePath = "/2015-03-31/functions/{FunctionName}/invocations",
+            HttpMethod = "POST",
+        };
+        _restLabelRequest.AddPathResource("{FunctionName}", "my-function");
+        _s3KeyRequest = new DefaultRequest(new BenchPipelineRequest(), "AmazonS3")
+        {
+            Endpoint = new Uri("https://amzn-s3-demo-bucket.s3.us-west-2.amazonaws.com"),
+            ResourcePath = "/{Key+}",
+            HttpMethod = "GET",
+        };
+        _s3KeyRequest.AddPathResource("{Key+}", "photos/2024/summer/beach day.jpg");
 
         // Warm up connection caches, user-agent caches and similar one-time state.
         _client.Call(_request);
@@ -142,6 +161,22 @@ public class PipelineBenchmarks
             return e.ErrorCode;
         }
     }
+
+    // URL composition for REST requests (HttpHandler calls this once per attempt): resolving path labels
+    // into the resource path, then building the request Uri.
+    [Benchmark]
+    public string ResolveResourcePath_RestLabel()
+        => AWSSDKUtils.ResolveResourcePathV2("2015-03-31/functions/{FunctionName}/invocations", _restLabelRequest.PathResources);
+
+    [Benchmark]
+    public string ResolveResourcePath_S3GreedyKey()
+        => AWSSDKUtils.ResolveResourcePathV2("{Key+}", _s3KeyRequest.PathResources);
+
+    [Benchmark]
+    public Uri ComposeUrl_RestLabel() => AmazonServiceClient.ComposeUrl(_restLabelRequest);
+
+    [Benchmark]
+    public Uri ComposeUrl_S3GreedyKey() => AmazonServiceClient.ComposeUrl(_s3KeyRequest);
 
     public sealed class BenchPipelineRequest : AmazonWebServiceRequest { }
 
