@@ -9,3 +9,5 @@ exact aws-sdk-net SHAs and options, and `bench-src/` is the benchmark source tha
 |---|---|---|---|---|---|
 | [ua-components-screen](ua-components-screen/summary.md) | 2026-11-20 | `b496276f584` | `63acef10855` | `7497b8c489a` |  |
 | [ua-components-full](ua-components-full/summary.md) | 2026-11-20 | `b496276f584` | `63acef10855` | `7497b8c489a` |  |
+| [ua-components-v2-vs-base](ua-components-v2-vs-base/summary.md) | 2026-11-21 | `65eb36eedaf` | `63acef10855` | `65eb36eedaf` | after security review fix 65eb36ee |
+| [ua-components-v2-vs-prev](ua-components-v2-vs-prev/summary.md) | 2026-11-21 | `65eb36eedaf` | `b496276f584` | `65eb36eedaf` | after security review fix 65eb36ee |
