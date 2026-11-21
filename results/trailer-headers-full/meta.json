@@ -1,0 +1,25 @@
+{
+  "sdk": {
+    "base": "63acef108559c9e7cb454c4a233f9d5638fb5fd2",
+    "base_ref": "origin/main",
+    "pr": "05ef1d7349a7b6e59cc6b5051127c79c800a23bd",
+    "pr_ref": "05ef1d7349a7b6e59cc6b5051127c79c800a23bd"
+  },
+  "benchmarks": {
+    "commit": "e476b0db37ef8af19ea2212b80411fb387a51e5f",
+    "uncommitted_changes": false
+  },
+  "filter": "*SigningBenchmarks.Sign_S3*",
+  "runtimes": [
+    "net10.0",
+    "net11.0"
+  ],
+  "rounds": 3,
+  "job": "Default",
+  "warmups": 3,
+  "iterations": 10,
+  "iteration_ms": 250,
+  "toolchain": "inprocess",
+  "screening": false,
+  "started": "2026-11-21T04:59:01Z"
+}
