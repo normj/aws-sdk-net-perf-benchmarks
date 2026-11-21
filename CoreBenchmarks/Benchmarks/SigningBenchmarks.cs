@@ -175,6 +175,55 @@ public class SigningBenchmarks
     public string CanonicalizeResourcePath_S3Key()
         => AWSSDKUtils.CanonicalizeResourcePathV2(_s3Endpoint, "/{Key+}", false, _s3KeyPathResources);
 
+    // The DynamoDB GetItem body in a PooledContentStream, which is how the generated JSON, XML and CBOR
+    // marshallers hand the body to the signer. DefaultRequest caches the content stream hash, so each
+    // invocation builds a fresh request around the same pooled body.
+    private PooledContentStream _pooledJsonBody;
+
+    private PooledContentStream PooledJsonBody()
+    {
+        if (_pooledJsonBody == null)
+        {
+            _pooledJsonBody = new PooledContentStream();
+            var body = _jsonPost.Content;
+            body.CopyTo(_pooledJsonBody.BufferWriter.GetSpan(body.Length));
+            _pooledJsonBody.BufferWriter.Advance(body.Length);
+        }
+        return _pooledJsonBody;
+    }
+
+    private IRequest NewPooledJsonPost()
+    {
+        var request = new DefaultRequest(new StubRequest(), "AmazonDynamoDBv2")
+        {
+            HttpMethod = "POST",
+            Endpoint = _jsonPost.Endpoint,
+            ResourcePath = "/",
+            AuthenticationRegion = "us-west-2",
+            ContentStream = PooledJsonBody(),
+        };
+        AddCommonHeaders(request);
+        request.Headers["Content-Type"] = "application/x-amz-json-1.0";
+        request.Headers["X-Amz-Target"] = "DynamoDB_20120810.GetItem";
+        request.Headers["Content-Length"] = _jsonPost.Headers["Content-Length"];
+        return request;
+    }
+
+    [Benchmark]
+    public string Sign_JsonPostPooledBody()
+    {
+        var request = NewPooledJsonPost();
+        _signer.Sign(request, _jsonConfig, _metrics, _credentials);
+        return request.Headers["Authorization"];
+    }
+
+    [Benchmark]
+    public string ContentStreamHash_PooledJson()
+    {
+        var request = new DefaultRequest(new StubRequest(), "AmazonDynamoDBv2") { ContentStream = PooledJsonBody() };
+        return request.ComputeContentStreamHash();
+    }
+
     // A SHA-256 sized value: the canonical request hash, payload hash and signature are all hex-encoded from 32 bytes.
     private static readonly byte[] _hash32 = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("SigningBenchmarks"));
 
