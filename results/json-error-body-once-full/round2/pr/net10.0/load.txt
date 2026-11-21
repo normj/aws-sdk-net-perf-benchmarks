@@ -1,0 +1,1 @@
+load1=0.7 max=2 waited=30
