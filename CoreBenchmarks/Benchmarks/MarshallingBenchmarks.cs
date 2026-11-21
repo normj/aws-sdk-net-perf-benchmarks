@@ -23,6 +23,7 @@ public class MarshallingBenchmarks
     private byte[] _jsonEpochDates;
     private byte[] _jsonBools;
     private byte[] _jsonStrings;
+    private byte[] _jsonStructures;
     private DateTime _date;
     private byte[] _jsonError;
     private byte[] _jsonErrorNoMessage;
@@ -44,6 +45,7 @@ public class MarshallingBenchmarks
         var jsonEpoch = new StringBuilder("[");
         var jsonBools = new StringBuilder("[");
         var jsonStrings = new StringBuilder("[");
+        var jsonStructures = new StringBuilder("[");
         for (int i = 0; i < Items; i++)
         {
             var d = baseDate.AddSeconds(rnd.Next(0, 300_000_000)).AddMilliseconds(rnd.Next(0, 1000));
@@ -59,6 +61,16 @@ public class MarshallingBenchmarks
             jsonEpoch.Append((d - DateTime.UnixEpoch).TotalSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture));
             jsonBools.Append(i % 3 == 0 ? "true" : "false");
             jsonStrings.Append("\"arn:aws:iam::123456789012:role/service-role/name-").Append(i).Append('"');
+            // DynamoDB ListBackups-shaped BackupSummary, members in the service's (alphabetical) order.
+            if (i > 0) jsonStructures.Append(',');
+            jsonStructures.Append("{\"BackupArn\":\"arn:aws:dynamodb:us-east-1:123456789012:table/orders/backup/0").Append(i).Append("\",")
+              .Append("\"BackupCreationDateTime\":").Append((d - DateTime.UnixEpoch).TotalSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture)).Append(',')
+              .Append("\"BackupName\":\"orders-").Append(i).Append("\",")
+              .Append("\"BackupSizeBytes\":").Append(rnd.Next(1, int.MaxValue)).Append(',')
+              .Append("\"BackupStatus\":\"AVAILABLE\",\"BackupType\":\"USER\",")
+              .Append("\"TableArn\":\"arn:aws:dynamodb:us-east-1:123456789012:table/orders\",")
+              .Append("\"TableId\":\"").Append(rnd.Next().ToString("x8")).Append("-1b2c-4d5e-8f90-").Append(rnd.Next().ToString("x8")).Append("\",")
+              .Append("\"TableName\":\"orders\"}");
         }
         sb.Append("</ListBucketResult>");
         dates.Append("</R>");
@@ -68,6 +80,7 @@ public class MarshallingBenchmarks
         _jsonEpochDates = Encoding.UTF8.GetBytes(jsonEpoch.Append(']').ToString());
         _jsonBools = Encoding.UTF8.GetBytes(jsonBools.Append(']').ToString());
         _jsonStrings = Encoding.UTF8.GetBytes(jsonStrings.Append(']').ToString());
+        _jsonStructures = Encoding.UTF8.GetBytes(jsonStructures.Append(']').ToString());
         _date = new DateTime(2024, 5, 17, 13, 45, 12, 345, DateTimeKind.Utc);
 
         _jsonError = Encoding.UTF8.GetBytes("{\"__type\":\"com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException\",\"message\":\"The conditional request failed\"}");
@@ -125,6 +138,11 @@ public class MarshallingBenchmarks
 
     [Benchmark]
     public int Json_Strings() => UnmarshallJsonList(_jsonStrings, new JsonListUnmarshaller<string, StringUnmarshaller>(StringUnmarshaller.Instance));
+
+    // A list of JSON structures unmarshalled member by member the way generated code does it:
+    // one TestExpression call per candidate member name until one matches.
+    [Benchmark]
+    public int Json_StructureMembers() => UnmarshallJsonList(_jsonStructures, new JsonListUnmarshaller<BackupLike, BackupLikeUnmarshaller>(BackupLikeUnmarshaller.Instance));
 
     // Request side: timestamp members formatted for query/XML/REST protocols.
     [Benchmark]
@@ -186,6 +204,41 @@ public class MarshallingBenchmarks
         public IHttpResponseBody ResponseBody => null;
         public IEventStreamHeader GetEventStreamHeader(string headerName) => null;
         public bool IsEventHeaderPresent(string headerName) => false;
+    }
+
+    public sealed class BackupLike
+    {
+        public string BackupArn, BackupName, BackupStatus, BackupType, TableArn, TableId, TableName;
+        public DateTime? BackupCreationDateTime, BackupExpiryDateTime;
+        public long? BackupSizeBytes;
+    }
+
+    // Same shape as the generated DynamoDB BackupSummaryUnmarshaller.
+    public sealed class BackupLikeUnmarshaller : IJsonUnmarshaller<BackupLike, JsonUnmarshallerContext>
+    {
+        public static readonly BackupLikeUnmarshaller Instance = new BackupLikeUnmarshaller();
+
+        public BackupLike Unmarshall(JsonUnmarshallerContext context, ref StreamingUtf8JsonReader reader)
+        {
+            var o = new BackupLike();
+            context.Read(ref reader);
+            if (context.CurrentTokenType == System.Text.Json.JsonTokenType.Null) return null;
+            int targetDepth = context.CurrentDepth;
+            while (context.ReadAtDepth(targetDepth, ref reader))
+            {
+                if (context.TestExpression("BackupArn", targetDepth, ref reader)) { o.BackupArn = StringUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+                if (context.TestExpression("BackupCreationDateTime", targetDepth, ref reader)) { o.BackupCreationDateTime = NullableDateTimeUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+                if (context.TestExpression("BackupExpiryDateTime", targetDepth, ref reader)) { o.BackupExpiryDateTime = NullableDateTimeUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+                if (context.TestExpression("BackupName", targetDepth, ref reader)) { o.BackupName = StringUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+                if (context.TestExpression("BackupSizeBytes", targetDepth, ref reader)) { o.BackupSizeBytes = NullableLongUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+                if (context.TestExpression("BackupStatus", targetDepth, ref reader)) { o.BackupStatus = StringUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+                if (context.TestExpression("BackupType", targetDepth, ref reader)) { o.BackupType = StringUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+                if (context.TestExpression("TableArn", targetDepth, ref reader)) { o.TableArn = StringUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+                if (context.TestExpression("TableId", targetDepth, ref reader)) { o.TableId = StringUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+                if (context.TestExpression("TableName", targetDepth, ref reader)) { o.TableName = StringUnmarshaller.Instance.Unmarshall(context, ref reader); continue; }
+            }
+            return o;
+        }
     }
 
     private static int UnmarshallJsonList<T, TU>(byte[] body, JsonListUnmarshaller<T, TU> unmarshaller)
