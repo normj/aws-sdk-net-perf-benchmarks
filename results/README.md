@@ -9,3 +9,5 @@ exact aws-sdk-net SHAs and options, and `bench-src/` is the benchmark source tha
 |---|---|---|---|---|---|
 | [parseurl-cache-screen](parseurl-cache-screen/summary.md) | 2026-11-21 | `c20c7a78147` | `63acef10855` | `47b79b920ea` |  |
 | [parseurl-cache-full](parseurl-cache-full/summary.md) | 2026-11-21 | `c20c7a78147` | `63acef10855` | `47b79b920ea` |  |
+| [parseurl-cache-v2-vs-base](parseurl-cache-v2-vs-base/summary.md) | 2026-11-21 | `6d87c6d5002` | `63acef10855` | `6d87c6d5002` | after security review fix (skip user info / long URLs) |
+| [parseurl-cache-v2-vs-prev](parseurl-cache-v2-vs-prev/summary.md) | 2026-11-21 | `6d87c6d5002` | `c20c7a78147` | `6d87c6d5002` | after security review fix (skip user info / long URLs) |
