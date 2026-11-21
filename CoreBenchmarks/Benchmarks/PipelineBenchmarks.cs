@@ -26,6 +26,8 @@ public class PipelineBenchmarks
 {
     private BenchPipelineClient _client;
     private BenchPipelineClient _yieldingClient;
+    private BenchPipelineClient _errorClient;
+    private BenchPipelineClient _yieldingErrorClient;
     private BenchPipelineRequest _request;
 
     [GlobalSetup]
@@ -33,12 +35,16 @@ public class PipelineBenchmarks
     {
         _client = CreateClient(yieldInHandler: false);
         _yieldingClient = CreateClient(yieldInHandler: true);
+        _errorClient = CreateClient(yieldInHandler: false, error: true);
+        _yieldingErrorClient = CreateClient(yieldInHandler: true, error: true);
         _request = new BenchPipelineRequest();
 
         // Warm up connection caches, user-agent caches and similar one-time state.
         _client.Call(_request);
         _client.CallAsync(_request).GetAwaiter().GetResult();
         _yieldingClient.CallAsync(_request).GetAwaiter().GetResult();
+        InvokeSync_ServiceError();
+        InvokeAsync_ServiceError_Yielding().GetAwaiter().GetResult();
     }
 
     [GlobalCleanup]
@@ -46,15 +52,17 @@ public class PipelineBenchmarks
     {
         _client?.Dispose();
         _yieldingClient?.Dispose();
+        _errorClient?.Dispose();
+        _yieldingErrorClient?.Dispose();
     }
 
-    private static BenchPipelineClient CreateClient(bool yieldInHandler)
+    private static BenchPipelineClient CreateClient(bool yieldInHandler, bool error = false)
     {
         var config = new BenchPipelineConfig
         {
             RegionEndpoint = RegionEndpoint.USWest2,
             AuthenticationServiceName = "dynamodb",
-            HttpClientFactory = new FakeHttpClientFactory(yieldInHandler),
+            HttpClientFactory = new FakeHttpClientFactory(yieldInHandler, error),
         };
         return new BenchPipelineClient(new BasicAWSCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"), config);
     }
@@ -80,6 +88,36 @@ public class PipelineBenchmarks
     {
         var response = await _yieldingClient.CallAsync(_request).ConfigureAwait(false);
         return response.ResponseMetadata.RequestId;
+    }
+
+    // A non-retryable 400 service error (for example a failed condition check), through the whole
+    // pipeline: error unmarshalling, the retry decision and the exception path of every handler.
+    [Benchmark]
+    public string InvokeSync_ServiceError()
+    {
+        try
+        {
+            _errorClient.Call(_request);
+            return null;
+        }
+        catch (AmazonServiceException e)
+        {
+            return e.ErrorCode;
+        }
+    }
+
+    [Benchmark]
+    public async Task<string> InvokeAsync_ServiceError_Yielding()
+    {
+        try
+        {
+            await _yieldingErrorClient.CallAsync(_request).ConfigureAwait(false);
+            return null;
+        }
+        catch (AmazonServiceException e)
+        {
+            return e.ErrorCode;
+        }
     }
 
     public sealed class BenchPipelineRequest : AmazonWebServiceRequest { }
@@ -173,41 +211,57 @@ public class PipelineBenchmarks
         }
 
         public override AmazonServiceException UnmarshallException(JsonUnmarshallerContext context, Exception innerException, HttpStatusCode statusCode)
-            => new AmazonServiceException("bench error", innerException, ErrorType.Unknown, "BenchError", null, statusCode);
+        {
+            var reader = new StreamingUtf8JsonReader(context.Stream, AWSConfigs.StreamingUtf8JsonReaderBufferSize ?? 4096, context.JsonMaxDepth);
+            var errorResponse = JsonErrorResponseUnmarshaller.GetInstance().Unmarshall(context, ref reader);
+            return new AmazonServiceException(errorResponse.Message, innerException, errorResponse.Type, errorResponse.Code, errorResponse.RequestId, statusCode);
+        }
     }
 
     private sealed class FakeHttpClientFactory : HttpClientFactory
     {
         private readonly bool _yield;
+        private readonly bool _error;
 
-        public FakeHttpClientFactory(bool yieldInHandler) => _yield = yieldInHandler;
+        public FakeHttpClientFactory(bool yieldInHandler, bool error)
+        {
+            _yield = yieldInHandler;
+            _error = error;
+        }
 
-        public override HttpClient CreateHttpClient(IClientConfig clientConfig) => new HttpClient(new FakeHttpMessageHandler(_yield));
+        public override HttpClient CreateHttpClient(IClientConfig clientConfig) => new HttpClient(new FakeHttpMessageHandler(_yield, _error));
     }
 
     private sealed class FakeHttpMessageHandler : HttpMessageHandler
     {
         private static readonly byte[] ResponseBody = Encoding.UTF8.GetBytes("{\"ReadCapacity\":10,\"WriteCapacity\":5}");
+        private static readonly byte[] ErrorBody = Encoding.UTF8.GetBytes(
+            "{\"__type\":\"com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException\",\"message\":\"The conditional request failed\"}");
         private readonly bool _yield;
+        private readonly bool _error;
 
-        public FakeHttpMessageHandler(bool yieldInHandler) => _yield = yieldInHandler;
+        public FakeHttpMessageHandler(bool yieldInHandler, bool error)
+        {
+            _yield = yieldInHandler;
+            _error = error;
+        }
 
         protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
-            => CreateResponse(request);
+            => CreateResponse(request, _error);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (_yield)
                 await Task.Yield();
-            return CreateResponse(request);
+            return CreateResponse(request, _error);
         }
 
-        private static HttpResponseMessage CreateResponse(HttpRequestMessage request)
+        private static HttpResponseMessage CreateResponse(HttpRequestMessage request, bool error)
         {
-            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            var response = new HttpResponseMessage(error ? HttpStatusCode.BadRequest : HttpStatusCode.OK)
             {
                 RequestMessage = request,
-                Content = new ByteArrayContent(ResponseBody),
+                Content = new ByteArrayContent(error ? ErrorBody : ResponseBody),
             };
             response.Content.Headers.TryAddWithoutValidation("Content-Type", "application/x-amz-json-1.0");
             response.Headers.TryAddWithoutValidation("x-amzn-RequestId", "4KHM2B6DFM8QOVQ1TQ6BJPO5O3VV4KQNSO5AEMVJF66Q9ASUAAJG");
