@@ -30,6 +30,8 @@ public class PipelineBenchmarks
     private BenchPipelineClient _yieldingErrorClient;
     private BenchPipelineClient _manyHeadersClient;
     private BenchPipelineClient _yieldingManyHeadersClient;
+    private BenchPipelineClient _rulesClient;
+    private BenchPipelineClient _yieldingRulesClient;
     private BenchPipelineRequest _request;
     private DefaultRequest _restLabelRequest;
     private DefaultRequest _s3KeyRequest;
@@ -45,6 +47,8 @@ public class PipelineBenchmarks
         _yieldingErrorClient = CreateClient(yieldInHandler: true, error: true);
         _manyHeadersClient = CreateClient(yieldInHandler: false, manyHeaders: true);
         _yieldingManyHeadersClient = CreateClient(yieldInHandler: true, manyHeaders: true);
+        _rulesClient = CreateClient(yieldInHandler: false, endpointRules: true);
+        _yieldingRulesClient = CreateClient(yieldInHandler: true, endpointRules: true);
         _request = new BenchPipelineRequest();
 
         // REST requests as the generated marshallers build them: a Lambda Invoke-shaped path with one label,
@@ -79,6 +83,8 @@ public class PipelineBenchmarks
         InvokeAsync_ServiceError_Yielding().GetAwaiter().GetResult();
         InvokeSync_JsonPost_ManyResponseHeaders();
         InvokeAsync_JsonPost_ManyResponseHeaders_Yielding().GetAwaiter().GetResult();
+        EndpointRules_InvokeSync_JsonPost();
+        EndpointRules_InvokeAsync_JsonPost_Yielding().GetAwaiter().GetResult();
     }
 
     [GlobalCleanup]
@@ -90,9 +96,11 @@ public class PipelineBenchmarks
         _yieldingErrorClient?.Dispose();
         _manyHeadersClient?.Dispose();
         _yieldingManyHeadersClient?.Dispose();
+        _rulesClient?.Dispose();
+        _yieldingRulesClient?.Dispose();
     }
 
-    private static BenchPipelineClient CreateClient(bool yieldInHandler, bool error = false, bool manyHeaders = false)
+    private static BenchPipelineClient CreateClient(bool yieldInHandler, bool error = false, bool manyHeaders = false, bool endpointRules = false)
     {
         var config = new BenchPipelineConfig
         {
@@ -100,7 +108,9 @@ public class PipelineBenchmarks
             AuthenticationServiceName = "dynamodb",
             HttpClientFactory = new FakeHttpClientFactory(yieldInHandler, error, manyHeaders),
         };
-        return new BenchPipelineClient(new BasicAWSCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"), config);
+        if (endpointRules)
+            config.EndpointProvider = BenchEndpointProvider.Instance;
+        return new BenchPipelineClient(new BasicAWSCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"), config, endpointRules);
     }
 
     // Synchronous Invoke through the whole pipeline.
@@ -171,6 +181,23 @@ public class PipelineBenchmarks
         }
     }
 
+    // The same JSON POST through a client wired the way generated clients are: the legacy EndpointResolver is
+    // removed and a BaseEndpointResolver subclass resolves the endpoint from the client's EndpointProvider on
+    // every request. The provider builds a new URL string per call, as the generated rule providers do, but skips
+    // rule evaluation, so the rows measure what the pipeline does with the resolved endpoint.
+    [Benchmark]
+    public string EndpointRules_InvokeSync_JsonPost()
+    {
+        return _rulesClient.Call(_request).ResponseMetadata.RequestId;
+    }
+
+    [Benchmark]
+    public async Task<string> EndpointRules_InvokeAsync_JsonPost_Yielding()
+    {
+        var response = await _yieldingRulesClient.CallAsync(_request).ConfigureAwait(false);
+        return response.ResponseMetadata.RequestId;
+    }
+
     // URL composition for REST requests (HttpHandler calls this once per attempt): resolving path labels
     // into the resource path, then building the request Uri.
     [Benchmark]
@@ -205,7 +232,18 @@ public class PipelineBenchmarks
 
     private sealed class BenchPipelineClient : AmazonServiceClient
     {
-        public BenchPipelineClient(AWSCredentials credentials, ClientConfig config) : base(credentials, config) { }
+        public BenchPipelineClient(AWSCredentials credentials, ClientConfig config) : this(credentials, config, false) { }
+
+        public BenchPipelineClient(AWSCredentials credentials, ClientConfig config, bool endpointRules) : base(credentials, config)
+        {
+            if (endpointRules)
+            {
+                // CustomizeRuntimePipeline runs in the base constructor, before the field is set, so the
+                // endpoint resolver is swapped in here instead.
+                RuntimePipeline.RemoveHandler<EndpointResolver>();
+                RuntimePipeline.AddHandlerAfter<BenchAuthSchemeHandler>(new BenchEndpointResolver());
+            }
+        }
 
         protected override void CustomizeRuntimePipeline(RuntimePipeline pipeline)
         {
@@ -240,6 +278,29 @@ public class PipelineBenchmarks
 
         protected override List<IAuthSchemeOption> ResolveAuthOptions(IExecutionContext executionContext)
             => AuthSchemeOption.DEFAULT_SIGV4;
+    }
+
+    // A BaseEndpointResolver subclass shaped like the generated ones (for example AmazonDynamoDBEndpointResolver).
+    private sealed class BenchEndpointResolver : BaseEndpointResolver
+    {
+        protected override Amazon.Runtime.Endpoints.EndpointParameters MapEndpointsParameters(IRequestContext requestContext)
+        {
+            var result = new Amazon.Runtime.Endpoints.EndpointParameters();
+            result["Region"] = requestContext.ClientConfig.RegionEndpoint?.SystemName;
+            result["UseDualStack"] = requestContext.ClientConfig.UseDualstackEndpoint;
+            result["UseFIPS"] = requestContext.ClientConfig.UseFIPSEndpoint;
+            result["Endpoint"] = requestContext.ClientConfig.ServiceURL;
+            return result;
+        }
+    }
+
+    // Returns a new endpoint with a newly built URL on every call, without a trailing slash, as the rules do.
+    private sealed class BenchEndpointProvider : Amazon.Runtime.Endpoints.IEndpointProvider
+    {
+        public static readonly BenchEndpointProvider Instance = new();
+
+        public Amazon.Runtime.Endpoints.Endpoint ResolveEndpoint(Amazon.Runtime.Endpoints.EndpointParameters parameters)
+            => new Amazon.Runtime.Endpoints.Endpoint("https://dynamodb." + (string)parameters["Region"] + ".amazonaws.com");
     }
 
     private sealed class BenchRequestMarshaller : IMarshaller<IRequest, AmazonWebServiceRequest>
