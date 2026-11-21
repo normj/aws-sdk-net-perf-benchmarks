@@ -33,6 +33,9 @@ public class MarshallingBenchmarks
     private ErrorResponseData _errorNoMessageResponseData;
     private string[] _deleteKeys;
     private string[] _deleteVersions;
+    private byte[] _xmlSmall;
+    private ResponseData _headerOnlyResponseData;
+    private ResponseData _xmlSmallResponseData;
 
     [GlobalSetup]
     public void Setup()
@@ -101,6 +104,11 @@ public class MarshallingBenchmarks
             _deleteKeys[i] = "logs/2024/05/17/application-server-" + i + "/request-" + rnd.Next(100000, 999999) + ".json.gz";
             _deleteVersions[i] = "3HL4kqtJlcpXroDTDmJ" + rnd.Next().ToString("x8") + "rRG6ib.Y" + rnd.Next().ToString("x8");
         }
+
+        // SNS Publish-shaped query-protocol response (a typical small XML body).
+        _xmlSmall = Encoding.UTF8.GetBytes("<PublishResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><PublishResult><MessageId>94f20ce6-13c5-43a0-9a9e-ca52d816e90b</MessageId></PublishResult><ResponseMetadata><RequestId>f187a3c1-376f-11df-8963-01868b7c937a</RequestId></ResponseMetadata></PublishResponse>");
+        _xmlSmallResponseData = new ResponseData(_xmlSmall.Length, "text/xml", HttpStatusCode.OK);
+        _headerOnlyResponseData = new ResponseData(0, "application/xml", HttpStatusCode.OK);
     }
 
     // End-to-end: an S3 ListObjectsV2-like body unmarshalled the way generated code does it.
@@ -205,6 +213,30 @@ public class MarshallingBenchmarks
         return (int)content.Length;
     }
 
+    // A REST-XML response whose members are all in headers (S3 PutObject, HeadObject, DeleteObject; GetObject
+    // hands context.Stream to the caller the same way): the context is created and disposed without reading XML.
+    [Benchmark]
+    public long Xml_HeaderOnlyResponse()
+    {
+        using var ctx = new XmlUnmarshallerContext(new MemoryStream(Array.Empty<byte>(), false), false, _headerOnlyResponseData, false, null);
+        return ctx.Stream.Length + (ctx.IsEmptyResponse ? 1 : 0);
+    }
+
+    // A small query-protocol response read the way generated code does it.
+    [Benchmark]
+    public int Xml_SmallResponse()
+    {
+        int total = 0;
+        using var ctx = new XmlUnmarshallerContext(new MemoryStream(_xmlSmall, false), false, _xmlSmallResponseData, false, null);
+        while (ctx.Read())
+        {
+            if (!ctx.IsStartElement) continue;
+            if (ctx.TestExpression("MessageId", 3)) total += StringUnmarshaller.Instance.Unmarshall(ctx).Length;
+            else if (ctx.TestExpression("ResponseMetadata", 2)) total += ResponseMetadataUnmarshaller.Instance.Unmarshall(ctx).RequestId.Length;
+        }
+        return total;
+    }
+
     private static string UnmarshallJsonError(byte[] body, IWebResponseData responseData)
     {
         using var ctx = new JsonUnmarshallerContext(new MemoryStream(body, false), false, responseData, isException: true);
@@ -231,6 +263,35 @@ public class MarshallingBenchmarks
         public string ContentType => "application/x-amz-json-1.0";
         public HttpStatusCode StatusCode => HttpStatusCode.BadRequest;
         public bool IsSuccessStatusCode => false;
+        public string[] GetHeaderNames() => _headers.Keys.ToArray();
+        public bool IsHeaderPresent(string headerName) => _headers.ContainsKey(headerName);
+        public string GetHeaderValue(string headerName) => _headers.TryGetValue(headerName, out var v) ? v : null;
+        public IHttpResponseBody ResponseBody => null;
+        public IEventStreamHeader GetEventStreamHeader(string headerName) => null;
+        public bool IsEventHeaderPresent(string headerName) => false;
+    }
+
+    private sealed class ResponseData : IWebResponseData
+    {
+        private readonly Dictionary<string, string> _headers;
+
+        public ResponseData(long contentLength, string contentType, HttpStatusCode statusCode)
+        {
+            ContentLength = contentLength;
+            ContentType = contentType;
+            StatusCode = statusCode;
+            _headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Content-Length"] = contentLength.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["Content-Type"] = contentType,
+                ["x-amz-request-id"] = "4442587FB7D0A2F9",
+            };
+        }
+
+        public long ContentLength { get; }
+        public string ContentType { get; }
+        public HttpStatusCode StatusCode { get; }
+        public bool IsSuccessStatusCode => (int)StatusCode >= 200 && (int)StatusCode < 300;
         public string[] GetHeaderNames() => _headers.Keys.ToArray();
         public bool IsHeaderPresent(string headerName) => _headers.ContainsKey(headerName);
         public string GetHeaderValue(string headerName) => _headers.TryGetValue(headerName, out var v) ? v : null;
