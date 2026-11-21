@@ -129,6 +129,15 @@ public class MarshallingBenchmarks
         return total;
     }
 
+    // The same body unmarshalled through generated-shaped code: S3's ListObjectsV2ResponseUnmarshaller and
+    // S3ObjectUnmarshaller test every member name in service order until one matches.
+    [Benchmark]
+    public int Xml_ListObjectsStructures()
+    {
+        using var ctx = new XmlUnmarshallerContext(new MemoryStream(_xmlListObjects, false), false, null);
+        return ListObjectsLikeUnmarshaller.Unmarshall(ctx).Count;
+    }
+
     // ISO 8601 timestamps in an XML body (S3, EC2, IAM, CloudFormation, ... query/XML protocols).
     [Benchmark]
     public long Xml_DateTimes()
@@ -298,6 +307,81 @@ public class MarshallingBenchmarks
         public IHttpResponseBody ResponseBody => null;
         public IEventStreamHeader GetEventStreamHeader(string headerName) => null;
         public bool IsEventHeaderPresent(string headerName) => false;
+    }
+
+    public sealed class S3ObjectLike
+    {
+        public List<string> ChecksumAlgorithm;
+        public string ChecksumType, ETag, Key, StorageClass, OwnerId, RestoreStatus;
+        public DateTime? LastModified;
+        public long? Size;
+    }
+
+    // Same shape as the generated S3 ListObjectsV2ResponseUnmarshaller.UnmarshallResult and S3ObjectUnmarshaller.
+    private static class ListObjectsLikeUnmarshaller
+    {
+        public static List<S3ObjectLike> Unmarshall(XmlUnmarshallerContext context)
+        {
+            var contents = new List<S3ObjectLike>();
+            string text = null;
+            int originalDepth = context.CurrentDepth;
+            int targetDepth = originalDepth + 1;
+            if (context.IsStartOfDocument)
+                targetDepth += 1;
+            while (context.Read())
+            {
+                if (context.IsStartElement || context.IsAttribute)
+                {
+                    if (context.TestExpression("CommonPrefixes", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("ContinuationToken", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("Delimiter", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("EncodingType", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("IsTruncated", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("KeyCount", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("MaxKeys", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("Name", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("NextContinuationToken", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("Prefix", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("Contents", targetDepth)) { contents.Add(UnmarshallObject(context)); continue; }
+                    if (context.TestExpression("StartAfter", targetDepth)) { text = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                }
+                else if (context.IsEndElement && context.CurrentDepth < originalDepth)
+                {
+                    break;
+                }
+            }
+            GC.KeepAlive(text);
+            return contents;
+        }
+
+        private static S3ObjectLike UnmarshallObject(XmlUnmarshallerContext context)
+        {
+            var o = new S3ObjectLike();
+            int originalDepth = context.CurrentDepth;
+            int targetDepth = originalDepth + 1;
+            if (context.IsStartOfDocument)
+                targetDepth += 2;
+            while (context.Read())
+            {
+                if (context.IsStartElement || context.IsAttribute)
+                {
+                    if (context.TestExpression("ChecksumAlgorithm", targetDepth)) { (o.ChecksumAlgorithm ??= new List<string>()).Add(StringUnmarshaller.Instance.Unmarshall(context)); continue; }
+                    if (context.TestExpression("ChecksumType", targetDepth)) { o.ChecksumType = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("ETag", targetDepth)) { o.ETag = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("Key", targetDepth)) { o.Key = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("LastModified", targetDepth)) { o.LastModified = NullableDateTimeUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("Owner", targetDepth)) { o.OwnerId = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("RestoreStatus", targetDepth)) { o.RestoreStatus = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("Size", targetDepth)) { o.Size = NullableLongUnmarshaller.Instance.Unmarshall(context); continue; }
+                    if (context.TestExpression("StorageClass", targetDepth)) { o.StorageClass = StringUnmarshaller.Instance.Unmarshall(context); continue; }
+                }
+                else if (context.IsEndElement && context.CurrentDepth < originalDepth)
+                {
+                    return o;
+                }
+            }
+            return o;
+        }
     }
 
     public sealed class BackupLike
