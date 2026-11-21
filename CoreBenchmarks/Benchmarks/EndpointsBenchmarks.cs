@@ -21,6 +21,7 @@ public class EndpointsBenchmarks
     private EndpointParameters _s3Params;
     private EndpointParameters _ddbParams;
     private Dictionary<string, object> _s3Refs;
+    private Arn _arn;
 
     [GlobalSetup]
     public void Setup()
@@ -49,6 +50,7 @@ public class EndpointsBenchmarks
             ["Region"] = "us-west-2",
             ["partitionResult"] = Partition("us-west-2"),
         };
+        _arn = ParseArn("arn:aws:s3:us-west-2:123456789012:accesspoint:my-endpoint");
     }
 
     // Replays AmazonS3EndpointProvider for a virtual-hosted bucket in us-west-2.
@@ -179,4 +181,11 @@ public class EndpointsBenchmarks
 
     [Benchmark]
     public Partition Partition_KnownRegion() => Partition("us-west-2");
+
+    // Generated rules mostly read a single property, e.g. GetAttr(refs["PartitionResult"], "name").
+    [Benchmark]
+    public object GetAttr_SingleSegment() => GetAttr(_s3Refs["partitionResult"], "name");
+
+    [Benchmark]
+    public object GetAttr_Indexed() => GetAttr(_arn, "resourceId[1]");
 }
