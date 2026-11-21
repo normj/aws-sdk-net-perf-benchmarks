@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    BenchmarkDotNet microbenchmarks for AWSSDK.Core.
+    AwsSdkNetRoot is the root of an aws-sdk-net checkout. ab.sh sets it to the base and the PR
+    worktree in turn. For a direct build, it defaults to a sibling ../aws-sdk-net checkout.
+  -->
+
+  <PropertyGroup>
+    <AwsSdkNetRoot Condition="'$(AwsSdkNetRoot)' == ''">$(MSBuildThisFileDirectory)../../aws-sdk-net/</AwsSdkNetRoot>
+    <AwsSdkNetRoot>$([MSBuild]::EnsureTrailingSlash('$(AwsSdkNetRoot)'))</AwsSdkNetRoot>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <IsPackable>false</IsPackable>
+    <Optimize>true</Optimize>
+    <WarningLevel>0</WarningLevel>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(AwsSdkNetRoot)sdk/src/Core/AWSSDK.Core.NetStandard.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.16.0-preview.2" />
+  </ItemGroup>
+
+  <Target Name="CheckAwsSdkNetRoot" BeforeTargets="Restore;Build">
+    <Error Condition="!Exists('$(AwsSdkNetRoot)sdk/src/Core/AWSSDK.Core.NetStandard.csproj')"
+           Text="AwsSdkNetRoot '$(AwsSdkNetRoot)' is not an aws-sdk-net checkout. Pass -p:AwsSdkNetRoot=/path/to/aws-sdk-net/." />
+  </Target>
+
+</Project>
