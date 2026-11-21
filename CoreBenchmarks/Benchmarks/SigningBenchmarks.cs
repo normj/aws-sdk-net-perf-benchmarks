@@ -224,6 +224,18 @@ public class SigningBenchmarks
         return request.ComputeContentStreamHash();
     }
 
+    // A canonical request shaped like the DynamoDB GetItem one above (session token included), as hashed for the string to sign.
+    private static readonly string _canonicalRequest =
+        "POST\n/\n\ncontent-length:105\ncontent-type:application/x-amz-json-1.0\nhost:dynamodb.us-west-2.amazonaws.com\n" +
+        "user-agent:aws-sdk-dotnet-coreclr/4.0.0.0 ua/2.0 os/linux lang/.NET_Core#10.0 md/aws-sdk-dotnet-core#4.0.0.0\n" +
+        "x-amz-content-sha256:5d41402abc4b2a76b9719d911017c592ae2ab8a0a0f4c1d4a1d5f0d0e3f1b2c3\nx-amz-date:20261121T000000Z\n" +
+        "x-amz-security-token:" + SessionToken + "\nx-amz-target:DynamoDB_20120810.GetItem\n\n" +
+        "content-length;content-type;host;user-agent;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-target\n" +
+        "5d41402abc4b2a76b9719d911017c592ae2ab8a0a0f4c1d4a1d5f0d0e3f1b2c3";
+
+    [Benchmark]
+    public byte[] ComputeHash_CanonicalRequest() => AWS4Signer.ComputeHash(_canonicalRequest);
+
     // A SHA-256 sized value: the canonical request hash, payload hash and signature are all hex-encoded from 32 bytes.
     private static readonly byte[] _hash32 = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("SigningBenchmarks"));
 
