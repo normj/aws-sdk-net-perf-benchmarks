@@ -175,6 +175,12 @@ public class SigningBenchmarks
     public string CanonicalizeResourcePath_S3Key()
         => AWSSDKUtils.CanonicalizeResourcePathV2(_s3Endpoint, "/{Key+}", false, _s3KeyPathResources);
 
+    // A SHA-256 sized value: the canonical request hash, payload hash and signature are all hex-encoded from 32 bytes.
+    private static readonly byte[] _hash32 = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("SigningBenchmarks"));
+
+    [Benchmark]
+    public string ToHex_Sha256Lower() => AWSSDKUtils.ToHex(_hash32, true);
+
     private sealed class StubRequest : AmazonWebServiceRequest { }
 
     private sealed class BenchClientConfig : ClientConfig
