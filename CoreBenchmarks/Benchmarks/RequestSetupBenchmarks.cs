@@ -40,6 +40,7 @@ public class RequestSetupBenchmarks
     private DefaultAWSCredentialsIdentityResolver _defaultResolver;
     private TelemetryPipelineClient _telemetryClient;
     private TelemetryPipelineRequest _telemetryRequest;
+    private TelemetryPipelineClient _plainClient;
 
     [GlobalSetup]
     public void Setup()
@@ -68,10 +69,18 @@ public class RequestSetupBenchmarks
         _telemetryRequest = new TelemetryPipelineRequest();
         Telemetry_InvokeSync();
         Telemetry_InvokeAsync().GetAwaiter().GetResult();
+
+        _plainClient = TelemetryPipelineClient.Create(telemetryProvider: null);
+        NewRequest_InvokeSync();
+        NewRequest_InvokeAsync().GetAwaiter().GetResult();
     }
 
     [GlobalCleanup]
-    public void Cleanup() => _telemetryClient?.Dispose();
+    public void Cleanup()
+    {
+        _telemetryClient?.Dispose();
+        _plainClient?.Dispose();
+    }
 
     [Benchmark]
     public UserAgentDetails Marshaller_PreInvoke()
@@ -146,6 +155,20 @@ public class RequestSetupBenchmarks
     [Benchmark]
     public async Task<string> Telemetry_InvokeAsync()
         => (await _telemetryClient.CallAsync(_telemetryRequest).ConfigureAwait(false)).ResponseMetadata.RequestId;
+
+    // Application code usually creates a new request object for every call. These rows do the same, so
+    // they include what constructing an AmazonWebServiceRequest costs, followed by a whole pipeline call
+    // with the default (no-op) telemetry provider.
+    [Benchmark]
+    public AmazonWebServiceRequest NewRequest_Construct() => new TelemetryPipelineRequest();
+
+    [Benchmark]
+    public string NewRequest_InvokeSync()
+        => _plainClient.Call(new TelemetryPipelineRequest()).ResponseMetadata.RequestId;
+
+    [Benchmark]
+    public async Task<string> NewRequest_InvokeAsync()
+        => (await _plainClient.CallAsync(new TelemetryPipelineRequest()).ConfigureAwait(false)).ResponseMetadata.RequestId;
 
     private ExecutionContext NewContext(BenchClientConfig config, bool isAsync)
     {
@@ -229,7 +252,10 @@ public class RequestSetupBenchmarks
     {
         private TelemetryPipelineClient(AWSCredentials credentials, ClientConfig config) : base(credentials, config) { }
 
-        public static TelemetryPipelineClient Create()
+        public static TelemetryPipelineClient Create() => Create(new NullListenerTelemetryProvider());
+
+        // A null telemetryProvider keeps the config's default (no-op) provider.
+        public static TelemetryPipelineClient Create(TelemetryProvider telemetryProvider)
         {
             var config = new TelemetryPipelineConfig
             {
@@ -237,8 +263,9 @@ public class RequestSetupBenchmarks
                 AuthenticationServiceName = "dynamodb",
                 ServiceId = "DynamoDB",
                 HttpClientFactory = new FakeHttpClientFactory(),
-                TelemetryProvider = new NullListenerTelemetryProvider(),
             };
+            if (telemetryProvider != null)
+                config.TelemetryProvider = telemetryProvider;
             return new TelemetryPipelineClient(new BasicAWSCredentials(AccessKey, SecretKey), config);
         }
 
