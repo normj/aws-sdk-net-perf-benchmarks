@@ -9,3 +9,5 @@ exact aws-sdk-net SHAs and options, and `bench-src/` is the benchmark source tha
 |---|---|---|---|---|---|
 | [partition-snapshot-screen](partition-snapshot-screen/summary.md) | 2026-11-21 | `ef76dbbc6f3` | `63acef10855` | `0a4dca0d0b9` |  |
 | [partition-snapshot-full](partition-snapshot-full/summary.md) | 2026-11-21 | `ef76dbbc6f3` | `63acef10855` | `0a4dca0d0b9` |  |
+| [partition-snapshot-v2-vs-base](partition-snapshot-v2-vs-base/summary.md) | 2026-11-21 | `e02a990daaf` | `63acef10855` | `e02a990daaf` | after security review fix (null outputs) |
+| [partition-snapshot-v2-vs-prev](partition-snapshot-v2-vs-prev/summary.md) | 2026-11-21 | `e02a990daaf` | `ef76dbbc6f3` | `e02a990daaf` | after security review fix (null outputs) |
