@@ -32,6 +32,8 @@ public class PipelineBenchmarks
     private BenchPipelineClient _yieldingManyHeadersClient;
     private BenchPipelineClient _rulesClient;
     private BenchPipelineClient _yieldingRulesClient;
+    private BenchPipelineClient _discoveryClient;
+    private BenchPipelineClient _yieldingDiscoveryClient;
     private BenchPipelineRequest _request;
     private DefaultRequest _restLabelRequest;
     private DefaultRequest _s3KeyRequest;
@@ -49,6 +51,8 @@ public class PipelineBenchmarks
         _yieldingManyHeadersClient = CreateClient(yieldInHandler: true, manyHeaders: true);
         _rulesClient = CreateClient(yieldInHandler: false, endpointRules: true);
         _yieldingRulesClient = CreateClient(yieldInHandler: true, endpointRules: true);
+        _discoveryClient = CreateClient(yieldInHandler: false, endpointDiscovery: true);
+        _yieldingDiscoveryClient = CreateClient(yieldInHandler: true, endpointDiscovery: true);
         _request = new BenchPipelineRequest();
 
         // REST requests as the generated marshallers build them: a Lambda Invoke-shaped path with one label,
@@ -85,6 +89,8 @@ public class PipelineBenchmarks
         InvokeAsync_JsonPost_ManyResponseHeaders_Yielding().GetAwaiter().GetResult();
         EndpointRules_InvokeSync_JsonPost();
         EndpointRules_InvokeAsync_JsonPost_Yielding().GetAwaiter().GetResult();
+        EndpointDiscovery_InvokeSync_JsonPost();
+        EndpointDiscovery_InvokeAsync_JsonPost_Yielding().GetAwaiter().GetResult();
     }
 
     [GlobalCleanup]
@@ -98,9 +104,11 @@ public class PipelineBenchmarks
         _yieldingManyHeadersClient?.Dispose();
         _rulesClient?.Dispose();
         _yieldingRulesClient?.Dispose();
+        _discoveryClient?.Dispose();
+        _yieldingDiscoveryClient?.Dispose();
     }
 
-    private static BenchPipelineClient CreateClient(bool yieldInHandler, bool error = false, bool manyHeaders = false, bool endpointRules = false)
+    private static BenchPipelineClient CreateClient(bool yieldInHandler, bool error = false, bool manyHeaders = false, bool endpointRules = false, bool endpointDiscovery = false)
     {
         var config = new BenchPipelineConfig
         {
@@ -110,7 +118,7 @@ public class PipelineBenchmarks
         };
         if (endpointRules)
             config.EndpointProvider = BenchEndpointProvider.Instance;
-        return new BenchPipelineClient(new BasicAWSCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"), config, endpointRules);
+        return new BenchPipelineClient(new BasicAWSCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"), config, endpointRules, endpointDiscovery);
     }
 
     // Synchronous Invoke through the whole pipeline.
@@ -198,6 +206,23 @@ public class PipelineBenchmarks
         return response.ResponseMetadata.RequestId;
     }
 
+    // The same JSON POST for an operation that requires endpoint discovery (as Amazon Timestream Write and Query
+    // operations do): the generated client sets EndpointDiscoveryMarshaller and EndpointOperation on the invoke
+    // options, and EndpointDiscoveryHandler resolves the discovered endpoint from the client's cache on every request.
+    // The discovery call itself is made once, during setup.
+    [Benchmark]
+    public string EndpointDiscovery_InvokeSync_JsonPost()
+    {
+        return _discoveryClient.Call(_request).ResponseMetadata.RequestId;
+    }
+
+    [Benchmark]
+    public async Task<string> EndpointDiscovery_InvokeAsync_JsonPost_Yielding()
+    {
+        var response = await _yieldingDiscoveryClient.CallAsync(_request).ConfigureAwait(false);
+        return response.ResponseMetadata.RequestId;
+    }
+
     // URL composition for REST requests (HttpHandler calls this once per attempt): resolving path labels
     // into the resource path, then building the request Uri.
     [Benchmark]
@@ -232,10 +257,13 @@ public class PipelineBenchmarks
 
     private sealed class BenchPipelineClient : AmazonServiceClient
     {
-        public BenchPipelineClient(AWSCredentials credentials, ClientConfig config) : this(credentials, config, false) { }
+        private readonly bool _endpointDiscovery;
 
-        public BenchPipelineClient(AWSCredentials credentials, ClientConfig config, bool endpointRules) : base(credentials, config)
+        public BenchPipelineClient(AWSCredentials credentials, ClientConfig config) : this(credentials, config, false, false) { }
+
+        public BenchPipelineClient(AWSCredentials credentials, ClientConfig config, bool endpointRules, bool endpointDiscovery) : base(credentials, config)
         {
+            _endpointDiscovery = endpointDiscovery;
             if (endpointRules)
             {
                 // CustomizeRuntimePipeline runs in the base constructor, before the field is set, so the
@@ -253,22 +281,38 @@ public class PipelineBenchmarks
 
         public BenchPipelineResponse Call(BenchPipelineRequest request)
         {
-            var options = new InvokeOptions
-            {
-                RequestMarshaller = BenchRequestMarshaller.Instance,
-                ResponseUnmarshaller = BenchResponseUnmarshaller.Instance,
-            };
-            return Invoke<BenchPipelineResponse>(request, options);
+            return Invoke<BenchPipelineResponse>(request, CreateOptions());
         }
 
         public Task<BenchPipelineResponse> CallAsync(BenchPipelineRequest request)
+        {
+            return InvokeAsync<BenchPipelineResponse>(request, CreateOptions(), default);
+        }
+
+        private InvokeOptions CreateOptions()
         {
             var options = new InvokeOptions
             {
                 RequestMarshaller = BenchRequestMarshaller.Instance,
                 ResponseUnmarshaller = BenchResponseUnmarshaller.Instance,
             };
-            return InvokeAsync<BenchPipelineResponse>(request, options, default);
+            if (_endpointDiscovery)
+            {
+                // As the generated clients do for operations with endpoint discovery.
+                options.EndpointDiscoveryMarshaller = BenchEndpointDiscoveryMarshaller.Instance;
+                options.EndpointOperation = EndpointOperation;
+            }
+            return options;
+        }
+
+        // As the generated clients implement it: resolve from the client's endpoint cache, calling the
+        // DescribeEndpoints-like operation only when the cache has nothing for the key.
+        protected override IEnumerable<DiscoveryEndpointBase> EndpointOperation(EndpointOperationContextBase context)
+        {
+            return EndpointDiscoveryResolver.ResolveEndpoints(context, () => new List<DiscoveryEndpointBase>
+            {
+                new DiscoveryEndpoint("ingest-cell2.timestream.us-west-2.amazonaws.com", 1440)
+            });
         }
     }
 
@@ -278,6 +322,14 @@ public class PipelineBenchmarks
 
         protected override List<IAuthSchemeOption> ResolveAuthOptions(IExecutionContext executionContext)
             => AuthSchemeOption.DEFAULT_SIGV4;
+    }
+
+    // Endpoint discovery data for an operation that requires discovery and has no identifiers (Timestream's shape).
+    private sealed class BenchEndpointDiscoveryMarshaller : IMarshaller<EndpointDiscoveryDataBase, AmazonWebServiceRequest>
+    {
+        public static readonly BenchEndpointDiscoveryMarshaller Instance = new();
+
+        public EndpointDiscoveryDataBase Marshall(AmazonWebServiceRequest input) => new EndpointDiscoveryData(true);
     }
 
     // A BaseEndpointResolver subclass shaped like the generated ones (for example AmazonDynamoDBEndpointResolver).
