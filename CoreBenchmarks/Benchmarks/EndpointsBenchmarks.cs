@@ -186,6 +186,13 @@ public class EndpointsBenchmarks
     [Benchmark]
     public object GetAttr_SingleSegment() => GetAttr(_s3Refs["partitionResult"], "name");
 
+    // Rules call ParseURL(refs["Endpoint"]) on every request when the client has a custom ServiceURL.
+    [Benchmark]
+    public URL ParseURL_CustomEndpoint() => ParseURL("https://vpce-0a1b2c3d4e5f.s3.us-west-2.vpce.amazonaws.com");
+
+    [Benchmark]
+    public URL ParseURL_WithPath() => ParseURL("http://localhost:4566/custom/path");
+
     [Benchmark]
     public object GetAttr_Indexed() => GetAttr(_arn, "resourceId[1]");
 }
