@@ -1,0 +1,24 @@
+{
+  "sdk": {
+    "base": "63acef108559c9e7cb454c4a233f9d5638fb5fd2",
+    "base_ref": "origin/main",
+    "pr": "d06f331686c289a47d73158c81f19f598b85aec6",
+    "pr_ref": "d06f331686c"
+  },
+  "benchmarks": {
+    "commit": "c547717a8afccc9417d1a99941aaf2b8d3f9edde",
+    "uncommitted_changes": false
+  },
+  "filter": "*PipelineBenchmarks.EndpointRules_*",
+  "runtimes": [
+    "net10.0"
+  ],
+  "rounds": 2,
+  "job": "Default",
+  "warmups": 2,
+  "iterations": 6,
+  "iteration_ms": 250,
+  "toolchain": "inprocess",
+  "screening": true,
+  "started": "2026-11-21T10:56:32Z"
+}
