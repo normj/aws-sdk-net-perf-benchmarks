@@ -236,6 +236,40 @@ public class SigningBenchmarks
     [Benchmark]
     public byte[] ComputeHash_CanonicalRequest() => AWS4Signer.ComputeHash(_canonicalRequest);
 
+    // S3 PutObject-shaped PUT with an unsigned payload and a trailing CRC32 checksum (the SDK default for
+    // streaming uploads over HTTPS). CleanHeaders restores Content-Length from X-Amz-Decoded-Content-Length on
+    // each re-sign, so every invocation does the full trailer setup.
+    private IRequest _s3PutTrailing;
+
+    private IRequest S3PutTrailing()
+    {
+        if (_s3PutTrailing == null)
+        {
+            _s3PutTrailing = new DefaultRequest(new StubRequest(), "AmazonS3")
+            {
+                HttpMethod = "PUT",
+                Endpoint = new Uri("https://my-bucket.s3.us-west-2.amazonaws.com"),
+                ResourcePath = "/uploads/2026/11/21/report.csv",
+                AuthenticationRegion = "us-west-2",
+                DisablePayloadSigning = true,
+                SelectedChecksum = CoreChecksumAlgorithm.CRC32,
+            };
+            AddCommonHeaders(_s3PutTrailing);
+            _s3PutTrailing.Headers["Content-Type"] = "text/csv";
+            _s3PutTrailing.Headers["Content-Length"] = "1048576";
+            _s3PutTrailing.TrailingHeaders["x-amz-checksum-crc32"] = string.Empty;
+        }
+        return _s3PutTrailing;
+    }
+
+    [Benchmark]
+    public string Sign_S3PutTrailingChecksum()
+    {
+        var request = S3PutTrailing();
+        _signer.Sign(request, _s3Config, _metrics, _credentials);
+        return request.Headers["Authorization"];
+    }
+
     // A SHA-256 sized value: the canonical request hash, payload hash and signature are all hex-encoded from 32 bytes.
     private static readonly byte[] _hash32 = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes("SigningBenchmarks"));
 
