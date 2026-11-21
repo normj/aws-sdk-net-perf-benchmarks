@@ -31,6 +31,8 @@ public class MarshallingBenchmarks
     private byte[] _readBuffer;
     private ErrorResponseData _errorResponseData;
     private ErrorResponseData _errorNoMessageResponseData;
+    private string[] _deleteKeys;
+    private string[] _deleteVersions;
 
     [GlobalSetup]
     public void Setup()
@@ -91,6 +93,14 @@ public class MarshallingBenchmarks
         _cachedBody = new byte[16 * 1024];
         rnd.NextBytes(_cachedBody);
         _readBuffer = new byte[4096];
+
+        _deleteKeys = new string[Items];
+        _deleteVersions = new string[Items];
+        for (int i = 0; i < Items; i++)
+        {
+            _deleteKeys[i] = "logs/2024/05/17/application-server-" + i + "/request-" + rnd.Next(100000, 999999) + ".json.gz";
+            _deleteVersions[i] = "3HL4kqtJlcpXroDTDmJ" + rnd.Next().ToString("x8") + "rRG6ib.Y" + rnd.Next().ToString("x8");
+        }
     }
 
     // End-to-end: an S3 ListObjectsV2-like body unmarshalled the way generated code does it.
@@ -170,6 +180,29 @@ public class MarshallingBenchmarks
         int total = 0, n;
         while ((n = stream.Read(_readBuffer, 0, _readBuffer.Length)) > 0) total += n;
         return total + stream.AllReadBytes.Count;
+    }
+
+    // Request side: an S3 DeleteObjects-shaped XML body (50 keys) written the way generated
+    // REST-XML marshallers do it, through XmlWriter into XMLEncodedBufferTextWriter.
+    [Benchmark]
+    public int Xml_WriteRequestBody()
+    {
+        using var content = new Amazon.Runtime.Internal.PooledContentStream();
+        var textWriter = new XMLEncodedBufferTextWriter(content.BufferWriter);
+        using (var xmlWriter = System.Xml.XmlWriter.Create(textWriter, new System.Xml.XmlWriterSettings { Encoding = Encoding.UTF8, OmitXmlDeclaration = true, NewLineHandling = System.Xml.NewLineHandling.Entitize }))
+        {
+            xmlWriter.WriteStartElement("Delete", "http://s3.amazonaws.com/doc/2006-03-01/");
+            for (int i = 0; i < Items; i++)
+            {
+                xmlWriter.WriteStartElement("Object");
+                xmlWriter.WriteElementString("Key", _deleteKeys[i]);
+                xmlWriter.WriteElementString("VersionId", _deleteVersions[i]);
+                xmlWriter.WriteEndElement();
+            }
+            xmlWriter.WriteElementString("Quiet", "true");
+            xmlWriter.WriteEndElement();
+        }
+        return (int)content.Length;
     }
 
     private static string UnmarshallJsonError(byte[] body, IWebResponseData responseData)
