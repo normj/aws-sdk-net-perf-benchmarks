@@ -165,18 +165,18 @@ public class PipelineBenchmarks
     // URL composition for REST requests (HttpHandler calls this once per attempt): resolving path labels
     // into the resource path, then building the request Uri.
     [Benchmark]
-    public string ResolveResourcePath_RestLabel()
+    public string RestUrl_ResolvePath_Label()
         => AWSSDKUtils.ResolveResourcePathV2("2015-03-31/functions/{FunctionName}/invocations", _restLabelRequest.PathResources);
 
     [Benchmark]
-    public string ResolveResourcePath_S3GreedyKey()
+    public string RestUrl_ResolvePath_S3GreedyKey()
         => AWSSDKUtils.ResolveResourcePathV2("{Key+}", _s3KeyRequest.PathResources);
 
     [Benchmark]
-    public Uri ComposeUrl_RestLabel() => AmazonServiceClient.ComposeUrl(_restLabelRequest);
+    public Uri RestUrl_ComposeUrl_Label() => AmazonServiceClient.ComposeUrl(_restLabelRequest);
 
     [Benchmark]
-    public Uri ComposeUrl_S3GreedyKey() => AmazonServiceClient.ComposeUrl(_s3KeyRequest);
+    public Uri RestUrl_ComposeUrl_S3GreedyKey() => AmazonServiceClient.ComposeUrl(_s3KeyRequest);
 
     public sealed class BenchPipelineRequest : AmazonWebServiceRequest { }
 
