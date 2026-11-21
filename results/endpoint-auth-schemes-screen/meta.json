@@ -1,0 +1,24 @@
+{
+  "sdk": {
+    "base": "63acef108559c9e7cb454c4a233f9d5638fb5fd2",
+    "base_ref": "origin/main",
+    "pr": "d1382bebc6b33423a0d61d1685221eb37dc2232e",
+    "pr_ref": "d1382bebc6b"
+  },
+  "benchmarks": {
+    "commit": "a7197364166f8b20a133957403e53456869d2e5a",
+    "uncommitted_changes": false
+  },
+  "filter": "*PipelineBenchmarks.EndpointAuthSchemes_*",
+  "runtimes": [
+    "net10.0"
+  ],
+  "rounds": 2,
+  "job": "Default",
+  "warmups": 2,
+  "iterations": 6,
+  "iteration_ms": 250,
+  "toolchain": "inprocess",
+  "screening": true,
+  "started": "2026-11-21T09:17:09Z"
+}
