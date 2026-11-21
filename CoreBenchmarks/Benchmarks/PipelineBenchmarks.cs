@@ -28,6 +28,8 @@ public class PipelineBenchmarks
     private BenchPipelineClient _yieldingClient;
     private BenchPipelineClient _errorClient;
     private BenchPipelineClient _yieldingErrorClient;
+    private BenchPipelineClient _manyHeadersClient;
+    private BenchPipelineClient _yieldingManyHeadersClient;
     private BenchPipelineRequest _request;
 
     [GlobalSetup]
@@ -37,6 +39,8 @@ public class PipelineBenchmarks
         _yieldingClient = CreateClient(yieldInHandler: true);
         _errorClient = CreateClient(yieldInHandler: false, error: true);
         _yieldingErrorClient = CreateClient(yieldInHandler: true, error: true);
+        _manyHeadersClient = CreateClient(yieldInHandler: false, manyHeaders: true);
+        _yieldingManyHeadersClient = CreateClient(yieldInHandler: true, manyHeaders: true);
         _request = new BenchPipelineRequest();
 
         // Warm up connection caches, user-agent caches and similar one-time state.
@@ -45,6 +49,8 @@ public class PipelineBenchmarks
         _yieldingClient.CallAsync(_request).GetAwaiter().GetResult();
         InvokeSync_ServiceError();
         InvokeAsync_ServiceError_Yielding().GetAwaiter().GetResult();
+        InvokeSync_JsonPost_ManyResponseHeaders();
+        InvokeAsync_JsonPost_ManyResponseHeaders_Yielding().GetAwaiter().GetResult();
     }
 
     [GlobalCleanup]
@@ -54,15 +60,17 @@ public class PipelineBenchmarks
         _yieldingClient?.Dispose();
         _errorClient?.Dispose();
         _yieldingErrorClient?.Dispose();
+        _manyHeadersClient?.Dispose();
+        _yieldingManyHeadersClient?.Dispose();
     }
 
-    private static BenchPipelineClient CreateClient(bool yieldInHandler, bool error = false)
+    private static BenchPipelineClient CreateClient(bool yieldInHandler, bool error = false, bool manyHeaders = false)
     {
         var config = new BenchPipelineConfig
         {
             RegionEndpoint = RegionEndpoint.USWest2,
             AuthenticationServiceName = "dynamodb",
-            HttpClientFactory = new FakeHttpClientFactory(yieldInHandler, error),
+            HttpClientFactory = new FakeHttpClientFactory(yieldInHandler, error, manyHeaders),
         };
         return new BenchPipelineClient(new BasicAWSCredentials("AKIDEXAMPLE", "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"), config);
     }
@@ -87,6 +95,21 @@ public class PipelineBenchmarks
     public async Task<string> InvokeAsync_JsonPost_Yielding()
     {
         var response = await _yieldingClient.CallAsync(_request).ConfigureAwait(false);
+        return response.ResponseMetadata.RequestId;
+    }
+
+    // Success responses carrying the dozen headers an S3 object response typically has (request ids,
+    // Date, Last-Modified, ETag, encryption and version headers, Accept-Ranges, Server), instead of four.
+    [Benchmark]
+    public string InvokeSync_JsonPost_ManyResponseHeaders()
+    {
+        return _manyHeadersClient.Call(_request).ResponseMetadata.RequestId;
+    }
+
+    [Benchmark]
+    public async Task<string> InvokeAsync_JsonPost_ManyResponseHeaders_Yielding()
+    {
+        var response = await _yieldingManyHeadersClient.CallAsync(_request).ConfigureAwait(false);
         return response.ResponseMetadata.RequestId;
     }
 
@@ -222,14 +245,16 @@ public class PipelineBenchmarks
     {
         private readonly bool _yield;
         private readonly bool _error;
+        private readonly bool _manyHeaders;
 
-        public FakeHttpClientFactory(bool yieldInHandler, bool error)
+        public FakeHttpClientFactory(bool yieldInHandler, bool error, bool manyHeaders)
         {
             _yield = yieldInHandler;
             _error = error;
+            _manyHeaders = manyHeaders;
         }
 
-        public override HttpClient CreateHttpClient(IClientConfig clientConfig) => new HttpClient(new FakeHttpMessageHandler(_yield, _error));
+        public override HttpClient CreateHttpClient(IClientConfig clientConfig) => new HttpClient(new FakeHttpMessageHandler(_yield, _error, _manyHeaders));
     }
 
     private sealed class FakeHttpMessageHandler : HttpMessageHandler
@@ -239,24 +264,26 @@ public class PipelineBenchmarks
             "{\"__type\":\"com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException\",\"message\":\"The conditional request failed\"}");
         private readonly bool _yield;
         private readonly bool _error;
+        private readonly bool _manyHeaders;
 
-        public FakeHttpMessageHandler(bool yieldInHandler, bool error)
+        public FakeHttpMessageHandler(bool yieldInHandler, bool error, bool manyHeaders)
         {
             _yield = yieldInHandler;
             _error = error;
+            _manyHeaders = manyHeaders;
         }
 
         protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
-            => CreateResponse(request, _error);
+            => CreateResponse(request, _error, _manyHeaders);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (_yield)
                 await Task.Yield();
-            return CreateResponse(request, _error);
+            return CreateResponse(request, _error, _manyHeaders);
         }
 
-        private static HttpResponseMessage CreateResponse(HttpRequestMessage request, bool error)
+        private static HttpResponseMessage CreateResponse(HttpRequestMessage request, bool error, bool manyHeaders)
         {
             var response = new HttpResponseMessage(error ? HttpStatusCode.BadRequest : HttpStatusCode.OK)
             {
@@ -266,6 +293,17 @@ public class PipelineBenchmarks
             response.Content.Headers.TryAddWithoutValidation("Content-Type", "application/x-amz-json-1.0");
             response.Headers.TryAddWithoutValidation("x-amzn-RequestId", "4KHM2B6DFM8QOVQ1TQ6BJPO5O3VV4KQNSO5AEMVJF66Q9ASUAAJG");
             response.Headers.Date = DateTimeOffset.UtcNow;
+            if (manyHeaders)
+            {
+                response.Headers.TryAddWithoutValidation("x-amz-id-2", "vlR7PnpV2Ce81l0PRw6jlUpck7Jo5ZsQjryTjKlc5aLWGVHPZLj5NeC6qMa0emYBDXOo6QBU0Wo=");
+                response.Headers.TryAddWithoutValidation("x-amz-request-id", "5HM0Z9GBP1BC9QX3");
+                response.Headers.TryAddWithoutValidation("x-amz-server-side-encryption", "AES256");
+                response.Headers.TryAddWithoutValidation("x-amz-version-id", "3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrHY");
+                response.Headers.TryAddWithoutValidation("ETag", "\"6805f2cfc46c0f04559748bb039d69ae\"");
+                response.Headers.TryAddWithoutValidation("Accept-Ranges", "bytes");
+                response.Headers.TryAddWithoutValidation("Server", "AmazonS3");
+                response.Content.Headers.TryAddWithoutValidation("Last-Modified", "Thu, 19 Nov 2026 18:22:45 GMT");
+            }
             return response;
         }
     }
